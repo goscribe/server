@@ -2,10 +2,14 @@ import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import { router } from '../trpc.js';
 import { auth } from './auth.js';
 import { workspace } from './workspace.js';
+import { flashcards } from './flashcards';
+import { worksheets } from './worksheets';
 
 export const appRouter = router({
   auth,
-  workspace
+  workspace,
+  flashcards,
+  worksheets,
 });
 
 // Export type for client inference

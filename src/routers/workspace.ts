@@ -1,16 +1,23 @@
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import { bucket } from '../lib/storage.js';
-import { FileAsset } from '@prisma/client';
 
 export const workspace = router({
+<<<<<<< HEAD
   // Mutation with Zod input
   list: authedProcedure
     .query(async ({ ctx, input }) => {
+=======
+  // List current user's workspaces
+  list: authedProcedure
+    .query(async ({ ctx }) => {
+>>>>>>> db4eddd (feat: implement some API functionality)
       const workspaces = await ctx.db.workspace.findMany({
         where: {
-          ownerId: ctx.session?.user.id,
+          ownerId: ctx.session.user.id,
         },
+        orderBy: { updatedAt: 'desc' },
       });
       return workspaces;
     }),
@@ -20,25 +27,26 @@ export const workspace = router({
         name: z.string().min(1).max(100),
         description: z.string().max(500).optional(),
      }))
-    .mutation(({ ctx, input}) => {
-      return ctx.db.workspace.create({
+    .mutation(async ({ ctx, input}) => {
+      const ws = await ctx.db.workspace.create({
         data: {
           title: input.name,
           description: input.description,
-          ownerId: ctx.session?.user.id,
+          ownerId: ctx.session.user.id,
         },
       });
+      return ws;
     }),
   get: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
-    .query(({ ctx, input }) => {
-      return ctx.db.workspace.findUnique({
-        where: {
-          id: input.id,
-        },
+    .query(async ({ ctx, input }) => {
+      const ws = await ctx.db.workspace.findFirst({
+        where: { id: input.id, ownerId: ctx.session.user.id },
       });
+      if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
+      return ws;
     }),
   update: authedProcedure
     .input(z.object({
@@ -46,27 +54,29 @@ export const workspace = router({
         name: z.string().min(1).max(100).optional(),
         description: z.string().max(500).optional(),
      }))
-    .mutation(({ ctx, input }) => {
-      return ctx.db.workspace.update({
-        where: {
-          id: input.id,
-        },
+    .mutation(async ({ ctx, input }) => {
+      const existed = await ctx.db.workspace.findFirst({
+        where: { id: input.id, ownerId: ctx.session.user.id },
+      });
+      if (!existed) throw new TRPCError({ code: 'NOT_FOUND' });
+      const updated = await ctx.db.workspace.update({
+        where: { id: input.id },
         data: {
-          title: input.name,
+          title: input.name ?? existed.title,
           description: input.description,
         },
-      }); 
+      });
+      return updated; 
     }), 
     delete: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
-    .mutation(({ ctx, input }) => {
-      ctx.db.workspace.delete({
-        where: {
-          id: input.id,
-        },
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await ctx.db.workspace.deleteMany({
+        where: { id: input.id, ownerId: ctx.session.user.id },
       });
+      if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;
     }),
     uploadFiles: authedProcedure
@@ -81,6 +91,9 @@ export const workspace = router({
         ),
      }))
     .mutation(async ({ ctx, input }) => {
+      // ensure workspace belongs to user
+      const ws = await ctx.db.workspace.findFirst({ where: { id: input.id, ownerId: ctx.session.user.id } });
+      if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
       const results = [];
 
       for (const file of input.files) {
@@ -127,31 +140,32 @@ export const workspace = router({
         fileId: z.array(z.string().uuid()),
         id: z.string().uuid(),
      }))
-    .mutation(({ ctx, input }) => {
-      const files = ctx.db.fileAsset.findMany({
+    .mutation(async ({ ctx, input }) => {
+      // ensure files are in the user's workspace
+      const files = await ctx.db.fileAsset.findMany({
         where: {
           id: { in: input.fileId },
           workspaceId: input.id,
+          userId: ctx.session.user.id,
         },
       });
+      // Delete from GCS (best-effort)
+      for (const file of files) {
+        if (file.bucket && file.objectKey) {
+          const gcsFile: import('@google-cloud/storage').File = bucket.file(file.objectKey);
+          gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
+            console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
+          });
+        }
+      }
 
-      // Delete from GCS
-      files.then((fileRecords: FileAsset[]) => {
-        fileRecords.forEach((file: FileAsset) => {
-          if (file.bucket && file.objectKey) {
-        const gcsFile: import('@google-cloud/storage').File = bucket.file(file.objectKey);
-        gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
-          console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
-        });
-          }
-        });
-      });
-
-      return ctx.db.fileAsset.deleteMany({
+      await ctx.db.fileAsset.deleteMany({
         where: {
           id: { in: input.fileId },
           workspaceId: input.id,
+          userId: ctx.session.user.id,
         },
       });
+      return true;
     }),
 });

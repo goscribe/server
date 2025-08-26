@@ -1,6 +1,10 @@
 {
   "name": "@goscribe/server",
+<<<<<<< HEAD
   "version": "1.0.5",
+=======
+  "version": "1.0.3",
+>>>>>>> db4eddd (feat: implement some API functionality)
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
