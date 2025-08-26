@@ -70,7 +70,7 @@ export const worksheets = router({
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
       order: z.number().int().optional(),
-      meta: z.record(z.any()).optional(),
+      meta: z.record(z.string(), z.unknown()).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const set = await ctx.db.artifact.findFirst({
@@ -97,7 +97,7 @@ export const worksheets = router({
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
       order: z.number().int().optional(),
-      meta: z.record(z.any()).optional(),
+      meta: z.record(z.string(), z.unknown()).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const q = await ctx.db.worksheetQuestion.findFirst({

@@ -4,15 +4,9 @@ import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import { bucket } from '../lib/storage.js';
 
 export const workspace = router({
-<<<<<<< HEAD
-  // Mutation with Zod input
-  list: authedProcedure
-    .query(async ({ ctx, input }) => {
-=======
   // List current user's workspaces
   list: authedProcedure
     .query(async ({ ctx }) => {
->>>>>>> db4eddd (feat: implement some API functionality)
       const workspaces = await ctx.db.workspace.findMany({
         where: {
           ownerId: ctx.session.user.id,
