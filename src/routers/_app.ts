@@ -4,12 +4,14 @@ import { auth } from './auth.js';
 import { workspace } from './workspace.js';
 import { flashcards } from './flashcards.js';
 import { worksheets } from './worksheets.js';
+import { studyguide } from './studyguide.js';
 
 export const appRouter = router({
   auth,
   workspace,
   flashcards,
   worksheets,
+  studyguide,
 });
 
 // Export type for client inference
