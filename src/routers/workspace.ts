@@ -136,13 +136,15 @@ export const workspace = router({
       });
 
       // Delete from GCS
-      files.then((file: FileAsset) => {
-        if (file.bucket && file.objectKey) {
-          const gcsFile = bucket.file(file.objectKey);
-          gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
-            console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
-          });
-        }
+      files.then((fileRecords: FileAsset[]) => {
+        fileRecords.forEach((file: FileAsset) => {
+          if (file.bucket && file.objectKey) {
+        const gcsFile: import('@google-cloud/storage').File = bucket.file(file.objectKey);
+        gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
+          console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
+        });
+          }
+        });
       });
 
       return ctx.db.fileAsset.deleteMany({
