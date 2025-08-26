@@ -1,6 +1,6 @@
 {
   "name": "@goscribe/server",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@auth/express": "^0.11.0",
     "@auth/prisma-adapter": "^2.10.0",
+    "@google-cloud/storage": "^7.17.0",
     "@prisma/client": "^6.14.0",
     "@trpc/server": "^11.5.0",
     "bcryptjs": "^3.0.2",
