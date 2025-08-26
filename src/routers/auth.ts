@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import bcrypt from 'bcryptjs';
+import { serialize } from 'cookie';
 
 export const auth = router({
   signup: publicProcedure
@@ -79,6 +80,14 @@ export const auth = router({
     if (!user) {
       throw new Error("User not found");
     }
+
+    ctx.res.setHeader("Set-Cookie", serialize("auth_token", session.id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "none", // cross-origin XHR needs None
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    }));
 
     return { id: session.id, userId: session.userId, user: { id: user.id, email: user.email, name: user.name, image: user.image } };
   }),
