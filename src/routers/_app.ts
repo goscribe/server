@@ -1,8 +1,10 @@
 import { router } from '../trpc';
-import { sampleRouter } from './sample';
+import { auth } from './auth';
+import { workspace } from './workspace';
 
 export const appRouter = router({
-  sample: sampleRouter,
+  auth,
+  workspace
 });
 
 // Export type for client inference

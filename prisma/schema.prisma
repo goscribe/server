@@ -34,17 +34,17 @@ model User {
   name          String?
   email         String?   @unique
   emailVerified DateTime?
+  passwordHash  String?   // for credentials login
   image         String?
 
   // Ownership
-  folders       Folder[]        @relation("UserFolders")
-  workspaces    Workspace[]     @relation("UserWorkspaces")
-  uploads       FileAsset[]     @relation("UserUploads")
-  artifacts     Artifact[]      @relation("UserArtifacts")
+  folders       Folder[]          @relation("UserFolders")
+  workspaces    Workspace[]       @relation("UserWorkspaces")
+  uploads       FileAsset[]       @relation("UserUploads")
+  artifacts     Artifact[]        @relation("UserArtifacts")
   versions      ArtifactVersion[] @relation("UserArtifactVersions")
 
   accounts      Account[]
-  sessions      Session[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -68,15 +68,6 @@ model Account {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
