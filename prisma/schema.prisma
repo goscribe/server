@@ -140,8 +140,8 @@ model FileAsset {
   name      String
   mimeType  String
   size      Int
-  bucket    String
-  objectKey String
+  bucket    String?
+  objectKey String?
   url       String?  // optional if serving via signed GET per-view
   checksum  String?  // optional server-side integrity
 

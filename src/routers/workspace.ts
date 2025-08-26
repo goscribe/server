@@ -1,51 +1,156 @@
 import { z } from 'zod';
 import { router, publicProcedure, authedProcedure } from '../trpc';
+import { bucket } from 'src/lib/storage';
 
 export const workspace = router({
   // Mutation with Zod input
   list: publicProcedure
     .query(async ({ ctx, input }) => {
+      const workspaces = await ctx.db.workspace.findMany({
+        where: {
+          ownerId: ctx.session?.user.id,
+        },
+      });
+      return workspaces;
     }),
     
   create: publicProcedure
     .input(z.object({
-  
+        name: z.string().min(1).max(100),
+        description: z.string().max(500).optional(),
      }))
-    .mutation(({ input }) => {
-   
+    .mutation(({ ctx, input}) => {
+      return ctx.db.workspace.create({
+        data: {
+          title: input.name,
+          description: input.description,
+          ownerId: ctx.session?.user.id,
+        },
+      });
     }),
   get: publicProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
-    .query(({ input }) => {
+    .query(({ ctx, input }) => {
+      return ctx.db.workspace.findUnique({
+        where: {
+          id: input.id,
+        },
+      });
     }),
   update: publicProcedure
     .input(z.object({
         id: z.string().uuid(),
+        name: z.string().min(1).max(100).optional(),
+        description: z.string().max(500).optional(),
      }))
-    .mutation(({ input }) => {
-   
+    .mutation(({ ctx, input }) => {
+      return ctx.db.workspace.update({
+        where: {
+          id: input.id,
+        },
+        data: {
+          title: input.name,
+          description: input.description,
+        },
+      }); 
     }), 
     delete: publicProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
-    .mutation(({ input }) => {
-   
+    .mutation(({ ctx, input }) => {
+      ctx.db.workspace.delete({
+        where: {
+          id: input.id,
+        },
+      });
+      return true;
     }),
-    upload: publicProcedure
+    uploadFiles: publicProcedure
     .input(z.object({
-        file: z.string(),
+        id: z.string().uuid(),
+        files: z.array(
+          z.object({
+            filename: z.string().min(1).max(255),
+            contentType: z.string().min(1).max(100),
+            size: z.number().min(1), // size in bytes
+          })
+        ),
      }))
-    .mutation(({ input }) => {
-   
+    .mutation(async ({ ctx, input }) => {
+      const results = [];
+
+      for (const file of input.files) {
+        // 1. Insert into DB
+        const record = await ctx.db.fileAsset.create({
+          data: {
+            userId: ctx.session.user.id,
+            name: file.filename,
+            mimeType: file.contentType,
+            size: file.size,
+            workspaceId: input.id,   
+          },
+        });
+
+        // 2. Generate signed URL for direct upload
+        const [url] = await bucket
+          .file(`${ctx.session.user.id}/${record.id}-${file.filename}`)
+          .getSignedUrl({
+            action: "write",
+            expires: Date.now() + 5 * 60 * 1000, // 5 min
+            contentType: file.contentType,
+          });
+
+        // 3. Update record with bucket info
+        await ctx.db.fileAsset.update({
+          where: { id: record.id },
+          data: {
+            bucket: bucket.name,
+            objectKey: `${ctx.session.user.id}/${record.id}-${file.filename}`,
+          },
+        }); 
+
+        results.push({
+          fileId: record.id,
+          uploadUrl: url,
+        });
+      }
+
+      return results;
+
     }),
-    deleteFile: publicProcedure
+    deleteFiles: publicProcedure
     .input(z.object({
-        fileId: z.string().uuid(),
+        fileId: z.array(z.string().uuid()),
+        id: z.string().uuid(),
      }))
-    .mutation(({ input }) => {
-   
+    .mutation(({ ctx, input }) => {
+      const files = ctx.db.fileAsset.findMany({
+        where: {
+          id: { in: input.fileId },
+          workspaceId: input.id,
+        },
+      });
+
+      // Delete from GCS
+      files.then((fileRecords) => {
+        fileRecords.forEach((file) => {
+          if (file.bucket && file.objectKey) {
+            const gcsFile = bucket.file(file.objectKey);
+            gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
+              console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
+            });
+          }
+        });
+      });
+
+      return ctx.db.fileAsset.deleteMany({
+        where: {
+          id: { in: input.fileId },
+          workspaceId: input.id,
+        },
+      });
     }),
 });

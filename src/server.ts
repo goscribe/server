@@ -16,7 +16,11 @@ async function main() {
 
   // Middlewares
   app.use(helmet());
-  app.use(cors({ origin: true, credentials: true }));
+  app.use(cors({
+    origin: "http://localhost:3000", // your Next.js dev URL
+    credentials: true, // allow cookies
+  }));
+
   app.use(morgan('dev'));
   app.use(compression());
   app.use(express.json());
