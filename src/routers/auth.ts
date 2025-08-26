@@ -48,7 +48,14 @@ export const auth = router({
         throw new Error("Invalid credentials");
       }
 
-      return { id: user.id, email: user.email, name: user.name };
+      const session = await ctx.db.session.create({
+        data: {
+          userId: user.id,
+          expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+        },
+      });
+
+      return { id: session.id, session: session.id, user: { id: user.id, email: user.email, name: user.name, image: user.image } };
     }),
   getSession: publicProcedure.query(async ({ ctx }) => {
     const session = await ctx.db.session.findUnique({
