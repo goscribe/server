@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure, authedProcedure } from '../trpc';
 import { bucket } from 'src/lib/storage';
-import { FileAsset } from 'src/generated/prisma';
+import { FileAsset } from '@prisma/client';
 
 export const workspace = router({
   // Mutation with Zod input
