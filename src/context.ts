@@ -9,6 +9,7 @@ export async function createContext({ req, res }: CreateExpressContextOptions) {
 
   // Only use custom auth cookie
   const custom = verifyCustomAuthCookie(cookies["auth_token"]);
+  
   if (custom) {
     return { db: prisma, session: { user: { id: custom.userId } } as any, req, res, cookies };
   }
