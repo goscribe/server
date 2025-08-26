@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc -p .",
+    "build": "npx prisma generate && tsc -p .",
     "start": "node dist/server.js"
   },
   "author": "",

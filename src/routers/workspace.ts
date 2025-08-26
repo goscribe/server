@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure, authedProcedure } from '../trpc';
 import { bucket } from 'src/lib/storage';
+import { FileAsset } from 'src/generated/prisma';
 
 export const workspace = router({
   // Mutation with Zod input
@@ -135,15 +136,13 @@ export const workspace = router({
       });
 
       // Delete from GCS
-      files.then((fileRecords) => {
-        fileRecords.forEach((file) => {
-          if (file.bucket && file.objectKey) {
-            const gcsFile = bucket.file(file.objectKey);
-            gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
-              console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
-            });
-          }
-        });
+      files.then((file: FileAsset) => {
+        if (file.bucket && file.objectKey) {
+          const gcsFile = bucket.file(file.objectKey);
+          gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
+            console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
+          });
+        }
       });
 
       return ctx.db.fileAsset.deleteMany({
