@@ -1,7 +1,7 @@
 // src/server/auth.ts
 import { ExpressAuth } from "@auth/express";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { prisma } from "../lib/prisma";
+import { prisma } from "../lib/prisma.js";
 import Google from "@auth/core/providers/google";
 import Credentials from "@auth/core/providers/credentials";
 

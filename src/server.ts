@@ -4,10 +4,10 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import * as trpcExpress from '@trpc/server/adapters/express';
-import { authRouter } from './lib/auth';
+import { authRouter } from './lib/auth.js';
 
-import { appRouter } from './routers/_app';
-import { createContext } from './context';
+import { appRouter } from './routers/_app.js';
+import { createContext } from './context.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 

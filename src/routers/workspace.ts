@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { router, publicProcedure, authedProcedure } from '../trpc';
-import { bucket } from 'src/lib/storage';
+import { router, publicProcedure, authedProcedure } from '../trpc.js';
+import { bucket } from '../lib/storage.js';
 import { FileAsset } from '@prisma/client';
 
 export const workspace = router({

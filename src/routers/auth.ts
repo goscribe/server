@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, publicProcedure, authedProcedure } from '../trpc';
+import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import bcrypt from 'bcryptjs';
 
 export const auth = router({

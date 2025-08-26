@@ -1,17 +1,24 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    "module": "ES2020",             // <-- this ensures ESM output
+    "moduleResolution": "bundler",
+    "plugins": [
+      { "transform": "typescript-transform-paths" },
+      { "transform": "typescript-transform-paths", "afterDeclarations": true }
+
+    ],
+    "baseUrl": "./",
+    "declaration": true,
+    "declarationDir": "dist",       // optional, but keeps .d.ts in dist
+    "emitDeclarationOnly": false,   // unless you only want .d.ts
+    "noEmit": false,            // must not be true
+
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "dist",
-    "baseUrl": ".", 
-    "declaration": true,
-    "declarationMap": true
+    "outDir": "dist"
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-} 
+  "include": ["src"],
+  "exclude": ["node_modules", "dist" ]
+}
