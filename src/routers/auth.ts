@@ -73,7 +73,7 @@ export const auth = router({
       throw new Error("User not found");
     }
 
-    return { id: session.id, userId: session.userId, user: { id: user.id, email: user.email, name: user.name } };
+    return { id: session.id, userId: session.userId, user: { id: user.id, email: user.email, name: user.name, image: user.image } };
   }),
 });
 
