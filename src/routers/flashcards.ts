@@ -12,7 +12,7 @@ const ArtifactType = {
 
 export const flashcards = router({
   listSets: authedProcedure
-    .input(z.object({ workspaceId: z.string().uuid() }))
+    .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
       const workspace = await ctx.db.workspace.findFirst({
         where: { id: input.workspaceId, ownerId: ctx.session.user.id },
@@ -29,42 +29,22 @@ export const flashcards = router({
         orderBy: { updatedAt: 'desc' },
       });
     }),
-
-  createSet: authedProcedure
-    .input(z.object({ workspaceId: z.string().uuid(), title: z.string().min(1).max(120) }))
-    .mutation(async ({ ctx, input }) => {
-      const workspace = await ctx.db.workspace.findFirst({
-        where: { id: input.workspaceId, ownerId: ctx.session.user.id },
-      });
-      if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
-      return ctx.db.artifact.create({
-        data: {
-          workspaceId: input.workspaceId,
-          type: ArtifactType.FLASHCARD_SET,
-          title: input.title,
-          createdById: ctx.session.user.id,
-        },
-      });
-    }),
-
-  getSet: authedProcedure
-    .input(z.object({ setId: z.string().uuid() }))
+  listCards: authedProcedure
+    .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
       const set = await ctx.db.artifact.findFirst({
-        where: {
-          id: input.setId,
-          type: ArtifactType.FLASHCARD_SET,
-          workspace: { ownerId: ctx.session.user.id },
+        where: { workspaceId: input.workspaceId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } },
+        include: {
+          flashcards: true,
         },
-        include: { flashcards: true },
+        orderBy: { updatedAt: 'desc' },
       });
       if (!set) throw new TRPCError({ code: 'NOT_FOUND' });
-      return set;
+      return set.flashcards;
     }),
-
   createCard: authedProcedure
     .input(z.object({
-      setId: z.string().uuid(),
+      workspaceId: z.string(),
       front: z.string().min(1),
       back: z.string().min(1),
       tags: z.array(z.string()).optional(),
@@ -72,12 +52,18 @@ export const flashcards = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const set = await ctx.db.artifact.findFirst({
-        where: { id: input.setId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } },
+        where: { type: ArtifactType.FLASHCARD_SET, workspace: {
+          id: input.workspaceId,
+        } },
+        include: {
+          flashcards: true,
+        },
+        orderBy: { updatedAt: 'desc' },
       });
       if (!set) throw new TRPCError({ code: 'NOT_FOUND' });
       return ctx.db.flashcard.create({
         data: {
-          artifactId: input.setId,
+          artifactId: set.id,
           front: input.front,
           back: input.back,
           tags: input.tags ?? [],
@@ -88,7 +74,7 @@ export const flashcards = router({
 
   updateCard: authedProcedure
     .input(z.object({
-      cardId: z.string().uuid(),
+      cardId: z.string(),
       front: z.string().optional(),
       back: z.string().optional(),
       tags: z.array(z.string()).optional(),
@@ -111,23 +97,13 @@ export const flashcards = router({
     }),
 
   deleteCard: authedProcedure
-    .input(z.object({ cardId: z.string().uuid() }))
+    .input(z.object({ cardId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const card = await ctx.db.flashcard.findFirst({
         where: { id: input.cardId, artifact: { workspace: { ownerId: ctx.session.user.id } } },
       });
       if (!card) throw new TRPCError({ code: 'NOT_FOUND' });
       await ctx.db.flashcard.delete({ where: { id: input.cardId } });
-      return true;
-    }),
-
-  deleteSet: authedProcedure
-    .input(z.object({ setId: z.string().uuid() }))
-    .mutation(async ({ ctx, input }) => {
-      const deleted = await ctx.db.artifact.deleteMany({
-        where: { id: input.setId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } },
-      });
-      if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;
     }),
 });

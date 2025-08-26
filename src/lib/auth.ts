@@ -7,7 +7,7 @@ export function verifyCustomAuthCookie(cookieValue: string | undefined): { userI
     return null;
   }
   
-  const secret = process.env.CUSTOM_AUTH_SECRET;
+  const secret = process.env.AUTH_SECRET;
   
   if (!secret) {
     return null;

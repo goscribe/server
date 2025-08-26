@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import { bucket } from '../lib/storage.js';
+import { ArtifactType } from '@prisma/client';
 
 export const workspace = router({
   // List current user's workspaces
@@ -27,6 +28,18 @@ export const workspace = router({
           title: input.name,
           description: input.description,
           ownerId: ctx.session.user.id,
+          artifacts: {
+            create: {
+              type: ArtifactType.FLASHCARD_SET,
+              title: "New Flashcard Set",
+            },
+            createMany: {
+              data: [
+                { type: ArtifactType.WORKSHEET, title: "Worksheet 1" },
+                { type: ArtifactType.WORKSHEET, title: "Worksheet 2" },
+              ],
+            },
+          },
         },
       });
       return ws;

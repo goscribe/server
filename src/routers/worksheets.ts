@@ -15,28 +15,27 @@ const Difficulty = {
 
 export const worksheets = router({
   // List all worksheet artifacts for a workspace
-  listSets: authedProcedure
-    .input(z.object({ workspaceId: z.string().uuid() }))
+  list: authedProcedure
+    .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const workspace = await ctx.db.workspace.findFirst({
-        where: { id: input.workspaceId, ownerId: ctx.session.user.id },
-      });
-      if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
-      return ctx.db.artifact.findMany({
+      const worksheets = await ctx.db.artifact.findMany({
         where: { workspaceId: input.workspaceId, type: ArtifactType.WORKSHEET },
         include: {
           versions: {
             orderBy: { version: 'desc' },
             take: 1, // Get only the latest version
           },
+          questions: true,
         },
         orderBy: { updatedAt: 'desc' },
       });
+      if (!worksheets) throw new TRPCError({ code: 'NOT_FOUND' });
+      return worksheets;
     }),
 
   // Create a worksheet set
   createWorksheet: authedProcedure
-    .input(z.object({ workspaceId: z.string().uuid(), title: z.string().min(1).max(120) }))
+    .input(z.object({ workspaceId: z.string(), title: z.string().min(1).max(120) }))
     .mutation(async ({ ctx, input }) => {
       const workspace = await ctx.db.workspace.findFirst({
         where: { id: input.workspaceId, ownerId: ctx.session.user.id },
@@ -53,8 +52,8 @@ export const worksheets = router({
     }),
 
   // Get a worksheet with its questions
-  getWorksheet: authedProcedure
-    .input(z.object({ worksheetId: z.string().uuid() }))
+  get: authedProcedure
+    .input(z.object({ worksheetId: z.string() }))
     .query(async ({ ctx, input }) => {
       const worksheet = await ctx.db.artifact.findFirst({
         where: {
@@ -71,7 +70,7 @@ export const worksheets = router({
   // Add a question to a worksheet
   createWorksheetQuestion: authedProcedure
     .input(z.object({
-      worksheetId: z.string().uuid(),
+      worksheetId: z.string(),
       prompt: z.string().min(1),
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
@@ -98,7 +97,7 @@ export const worksheets = router({
   // Update a question
   updateWorksheetQuestion: authedProcedure
     .input(z.object({
-      worksheetQuestionId: z.string().uuid(),
+      worksheetQuestionId: z.string(),
       prompt: z.string().optional(),
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
@@ -124,7 +123,7 @@ export const worksheets = router({
 
   // Delete a question
   deleteWorksheetQuestion: authedProcedure
-    .input(z.object({ worksheetQuestionId: z.string().uuid() }))
+    .input(z.object({ worksheetQuestionId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const q = await ctx.db.worksheetQuestion.findFirst({
         where: { id: input.worksheetQuestionId, artifact: { workspace: { ownerId: ctx.session.user.id } } },
@@ -136,7 +135,7 @@ export const worksheets = router({
 
   // Delete a worksheet set and its questions
   deleteWorksheet: authedProcedure
-      .input(z.object({ worksheetId: z.string().uuid() }))
+      .input(z.object({ worksheetId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const deleted = await ctx.db.artifact.deleteMany({
         where: { id: input.worksheetId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } },
