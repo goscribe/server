@@ -24,12 +24,18 @@ export const worksheets = router({
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
       return ctx.db.artifact.findMany({
         where: { workspaceId: input.workspaceId, type: ArtifactType.WORKSHEET },
+        include: {
+          versions: {
+            orderBy: { version: 'desc' },
+            take: 1, // Get only the latest version
+          },
+        },
         orderBy: { updatedAt: 'desc' },
       });
     }),
 
   // Create a worksheet set
-  createSet: authedProcedure
+  createWorksheet: authedProcedure
     .input(z.object({ workspaceId: z.string().uuid(), title: z.string().min(1).max(120) }))
     .mutation(async ({ ctx, input }) => {
       const workspace = await ctx.db.workspace.findFirst({
@@ -47,25 +53,25 @@ export const worksheets = router({
     }),
 
   // Get a worksheet with its questions
-  getSet: authedProcedure
-    .input(z.object({ setId: z.string().uuid() }))
+  getWorksheet: authedProcedure
+    .input(z.object({ worksheetId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const set = await ctx.db.artifact.findFirst({
+      const worksheet = await ctx.db.artifact.findFirst({
         where: {
-          id: input.setId,
+          id: input.worksheetId,
           type: ArtifactType.WORKSHEET,
           workspace: { ownerId: ctx.session.user.id },
         },
         include: { questions: true },
       });
-      if (!set) throw new TRPCError({ code: 'NOT_FOUND' });
-      return set;
+      if (!worksheet) throw new TRPCError({ code: 'NOT_FOUND' });
+      return worksheet;
     }),
 
   // Add a question to a worksheet
-  createQuestion: authedProcedure
+  createWorksheetQuestion: authedProcedure
     .input(z.object({
-      setId: z.string().uuid(),
+      worksheetId: z.string().uuid(),
       prompt: z.string().min(1),
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
@@ -73,13 +79,13 @@ export const worksheets = router({
       meta: z.record(z.string(), z.unknown()).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const set = await ctx.db.artifact.findFirst({
-        where: { id: input.setId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } },
+      const worksheet = await ctx.db.artifact.findFirst({
+        where: { id: input.worksheetId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } },
       });
-      if (!set) throw new TRPCError({ code: 'NOT_FOUND' });
+      if (!worksheet) throw new TRPCError({ code: 'NOT_FOUND' });
       return ctx.db.worksheetQuestion.create({
         data: {
-          artifactId: input.setId,
+          artifactId: input.worksheetId,
           prompt: input.prompt,
           answer: input.answer,
           difficulty: (input.difficulty ?? Difficulty.MEDIUM) as any,
@@ -90,9 +96,9 @@ export const worksheets = router({
     }),
 
   // Update a question
-  updateQuestion: authedProcedure
+  updateWorksheetQuestion: authedProcedure
     .input(z.object({
-      questionId: z.string().uuid(),
+      worksheetQuestionId: z.string().uuid(),
       prompt: z.string().optional(),
       answer: z.string().optional(),
       difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
@@ -101,11 +107,11 @@ export const worksheets = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const q = await ctx.db.worksheetQuestion.findFirst({
-        where: { id: input.questionId, artifact: { type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } } },
+        where: { id: input.worksheetQuestionId, artifact: { type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } } },
       });
       if (!q) throw new TRPCError({ code: 'NOT_FOUND' });
       return ctx.db.worksheetQuestion.update({
-        where: { id: input.questionId },
+        where: { id: input.worksheetQuestionId },
         data: {
           prompt: input.prompt ?? q.prompt,
           answer: input.answer ?? q.answer,
@@ -117,23 +123,23 @@ export const worksheets = router({
     }),
 
   // Delete a question
-  deleteQuestion: authedProcedure
-    .input(z.object({ questionId: z.string().uuid() }))
+  deleteWorksheetQuestion: authedProcedure
+    .input(z.object({ worksheetQuestionId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const q = await ctx.db.worksheetQuestion.findFirst({
-        where: { id: input.questionId, artifact: { workspace: { ownerId: ctx.session.user.id } } },
+        where: { id: input.worksheetQuestionId, artifact: { workspace: { ownerId: ctx.session.user.id } } },
       });
       if (!q) throw new TRPCError({ code: 'NOT_FOUND' });
-      await ctx.db.worksheetQuestion.delete({ where: { id: input.questionId } });
+      await ctx.db.worksheetQuestion.delete({ where: { id: input.worksheetQuestionId } });
       return true;
     }),
 
   // Delete a worksheet set and its questions
-  deleteSet: authedProcedure
-    .input(z.object({ setId: z.string().uuid() }))
+  deleteWorksheet: authedProcedure
+      .input(z.object({ worksheetId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const deleted = await ctx.db.artifact.deleteMany({
-        where: { id: input.setId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } },
+        where: { id: input.worksheetId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } },
       });
       if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;

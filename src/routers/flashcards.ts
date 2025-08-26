@@ -20,6 +20,12 @@ export const flashcards = router({
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
       return ctx.db.artifact.findMany({
         where: { workspaceId: input.workspaceId, type: ArtifactType.FLASHCARD_SET },
+        include: {
+          versions: {
+            orderBy: { version: 'desc' },
+            take: 1, // Get only the latest version
+          },
+        },
         orderBy: { updatedAt: 'desc' },
       });
     }),

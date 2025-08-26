@@ -2,8 +2,8 @@ import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import { router } from '../trpc.js';
 import { auth } from './auth.js';
 import { workspace } from './workspace.js';
-import { flashcards } from './flashcards';
-import { worksheets } from './worksheets';
+import { flashcards } from './flashcards.js';
+import { worksheets } from './worksheets.js';
 
 export const appRouter = router({
   auth,
