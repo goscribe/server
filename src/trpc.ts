@@ -15,20 +15,14 @@ export const publicProcedure = t.procedure;
 
 /** Middleware that enforces authentication */
 const isAuthed = middleware(({ ctx, next }) => {
-  if (!ctx.session?.user?.id) {
+  const hasUser = Boolean((ctx.session as any)?.user?.id);
+  if (!ctx.session || !hasUser) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
+
   return next({
     ctx: {
-      ...ctx,
-      // refine ctx: session is guaranteed, user.id is string
-      session: {
-        ...ctx.session,
-        user: {
-          ...ctx.session.user,
-          id: ctx.session.user.id, // typed non-null
-        },
-      },
+      session: ctx.session,
     },
   });
 });

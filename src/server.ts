@@ -4,7 +4,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import compression from 'compression';
 import * as trpcExpress from '@trpc/server/adapters/express';
-import { authRouter } from './lib/auth.js';
 
 import { appRouter } from './routers/_app.js';
 import { createContext } from './context.js';
@@ -25,8 +24,6 @@ async function main() {
   app.use(compression());
   app.use(express.json());
   
-  app.use("/auth", authRouter);         // Auth routes live under /auth/*
-
 
   // Health (plain Express)
   app.get('/', (_req, res) => {

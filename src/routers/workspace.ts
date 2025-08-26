@@ -5,7 +5,7 @@ import { FileAsset } from '@prisma/client';
 
 export const workspace = router({
   // Mutation with Zod input
-  list: publicProcedure
+  list: authedProcedure
     .query(async ({ ctx, input }) => {
       const workspaces = await ctx.db.workspace.findMany({
         where: {
@@ -15,7 +15,7 @@ export const workspace = router({
       return workspaces;
     }),
     
-  create: publicProcedure
+  create: authedProcedure
     .input(z.object({
         name: z.string().min(1).max(100),
         description: z.string().max(500).optional(),
@@ -29,7 +29,7 @@ export const workspace = router({
         },
       });
     }),
-  get: publicProcedure
+  get: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
@@ -40,7 +40,7 @@ export const workspace = router({
         },
       });
     }),
-  update: publicProcedure
+  update: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
         name: z.string().min(1).max(100).optional(),
@@ -57,7 +57,7 @@ export const workspace = router({
         },
       }); 
     }), 
-    delete: publicProcedure
+    delete: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
      }))
@@ -69,7 +69,7 @@ export const workspace = router({
       });
       return true;
     }),
-    uploadFiles: publicProcedure
+    uploadFiles: authedProcedure
     .input(z.object({
         id: z.string().uuid(),
         files: z.array(
@@ -122,7 +122,7 @@ export const workspace = router({
       return results;
 
     }),
-    deleteFiles: publicProcedure
+    deleteFiles: authedProcedure
     .input(z.object({
         fileId: z.array(z.string().uuid()),
         id: z.string().uuid(),
