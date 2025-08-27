@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
-import { createInferenceService } from '../lib/inference.js';
 
 // Avoid importing Prisma enums directly; mirror values as string literals
 const ArtifactType = {
@@ -383,18 +382,6 @@ export const worksheets = router({
       });
       if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;
-    }),
-
-  // Generate worksheet using AI
-  generate: authedProcedure
-    .input(z.object({
-      workspaceId: z.string().uuid(),
-      content: z.string().min(1),
-      difficulty: z.enum(['EASY', 'MEDIUM', 'HARD']).optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const inference = createInferenceService(ctx);
-      return inference.generateWorksheet(input.workspaceId, input.content, input.difficulty);
     }),
 });
 

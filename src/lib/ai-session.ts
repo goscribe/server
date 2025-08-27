@@ -1,12 +1,11 @@
 import { TRPCError } from '@trpc/server';
 
 // External AI service configuration
-const AI_SERVICE_URL = 'https://txp-tckxn64wn5vtgip72wn5vtgip72-kzoemq8qw-custom.service.onethingrobot.com/upload';
-const AI_RESPONSE_URL = 'https://txp-tckxn64wn5vtgip72wn5vtgip72-kzoemq8qw-custom.service.onethingrobot.com/last_response';
+const AI_SERVICE_URL = 'https://txp-tckxn64wn5vtgip72-kzoemq8qw-custom.service.onethingrobot.com/upload';
+const AI_RESPONSE_URL = 'https://txp-tckxn64wn5vtgip72-kzoemq8qw-custom.service.onethingrobot.com/last_response';
 
 export interface AISession {
   id: string;
-  userId: string;
   workspaceId: string;
   status: 'initialized' | 'processing' | 'ready' | 'error';
   files: string[];
@@ -19,46 +18,72 @@ export class AISessionService {
   private sessions = new Map<string, AISession>();
 
   // Initialize a new AI session
-  async initSession(userId: string, workspaceId: string): Promise<AISession> {
-    const sessionId = `${userId}_${workspaceId}_${Date.now()}`;
+  async initSession(workspaceId: string): Promise<AISession> {
+    const sessionId = `${workspaceId}`;
     
     const formData = new FormData();
     formData.append('command', 'init_session');
     formData.append('id', sessionId);
 
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
+    // Retry logic for AI service
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🤖 AI Session init attempt ${attempt}/${maxRetries} for workspace ${workspaceId}`);
+        
+        const response = await fetch(AI_SERVICE_URL, {
+          method: 'POST',
+          body: formData,
+        });
+
+        console.log(`📡 AI Service response status: ${response.status} ${response.statusText}`);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ AI Service error response:`, errorText);
+          throw new Error(`AI service error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        console.log(`📋 AI Service result:`, result);
+        
+        // If we get a response with a message, consider it successful
+        if (!result.message) {
+          throw new Error(`AI service error: No response message`);
+        }
+
+        const session: AISession = {
+          id: sessionId,
+          workspaceId,
+          status: 'initialized',
+          files: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        this.sessions.set(sessionId, session);
+        console.log(`✅ AI Session initialized successfully on attempt ${attempt}`);
+        return session;
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        console.error(`❌ AI Session init attempt ${attempt} failed:`, lastError.message);
+        
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+          console.log(`⏳ Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
-
-      const result = await response.json();
-      if (result.status !== 'Session initialized successfully!') {
-        throw new Error(`AI service error: ${result.status}`);
-      }
-
-      const session: AISession = {
-        id: sessionId,
-        userId,
-        workspaceId,
-        status: 'initialized',
-        files: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      this.sessions.set(sessionId, session);
-      return session;
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to initialize AI session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
     }
+
+    console.error(`💥 All ${maxRetries} attempts failed. Last error:`, lastError?.message);
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: `Failed to initialize AI session after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`,
+    });
   }
 
   // Upload file to AI session
@@ -85,8 +110,9 @@ export class AISessionService {
       }
 
       const result = await response.json();
-      if (!result.status.startsWith('Upload success:')) {
-        throw new Error(`AI service error: ${result.status}`);
+      console.log(`📋 Upload result:`, result);
+      if (!result.message) {
+        throw new Error(`AI service error: No response message`);
       }
 
       // Update session
@@ -123,8 +149,9 @@ export class AISessionService {
       }
 
       const result = await response.json();
-      if (result.status !== 'Instruction Text Reset Successful') {
-        throw new Error(`AI service error: ${result.status}`);
+      console.log(`📋 Set instruction result:`, result);
+      if (!result.message) {
+        throw new Error(`AI service error: No response message`);
       }
 
       // Update session
@@ -160,8 +187,9 @@ export class AISessionService {
       }
 
       const result = await response.json();
-      if (!result.status.startsWith('LLM session started:')) {
-        throw new Error(`AI service error: ${result.status}`);
+      console.log(`📋 Start LLM result:`, result);
+      if (!result.message) {
+        throw new Error(`AI service error: No response message`);
       }
 
       // Update session
@@ -202,7 +230,7 @@ export class AISessionService {
         throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
       }
 
-      return await contentResponse.text();
+      return (await contentResponse.json())['last_response'];
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -239,7 +267,7 @@ export class AISessionService {
         throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
       }
 
-      return await contentResponse.text();
+      return (await contentResponse.json())['last_response'];
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -276,11 +304,71 @@ export class AISessionService {
         throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
       }
 
-      return await contentResponse.text();
+      return (await contentResponse.json())['last_response'];
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message: `Failed to generate worksheet questions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
+
+  // Analyse PDF
+  async analysePDF(sessionId: string): Promise<string> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
+    }
+
+    const formData = new FormData();
+    formData.append('command', 'analyse_pdf');
+
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      return result.message || 'PDF analysis completed';
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to analyse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
+
+  // Analyse Image
+  async analyseImage(sessionId: string): Promise<string> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
+    }
+
+    const formData = new FormData();
+    formData.append('command', 'analyse_img');
+
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      return result.message || 'Image analysis completed';
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to analyse image: ${error instanceof Error ? error.message : 'Unknown error'}`,
       });
     }
   }
@@ -293,13 +381,30 @@ export class AISessionService {
   // Get sessions by user and workspace
   getSessionsByUserAndWorkspace(userId: string, workspaceId: string): AISession[] {
     return Array.from(this.sessions.values()).filter(
-      session => session.userId === userId && session.workspaceId === workspaceId
+      session => session.workspaceId === workspaceId
     );
   }
 
   // Delete session
   deleteSession(sessionId: string): boolean {
     return this.sessions.delete(sessionId);
+  }
+
+  // Check if AI service is available
+  async checkHealth(): Promise<boolean> {
+    try {
+      console.log('🏥 Checking AI service health...');
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: new FormData(), // Empty form data
+      });
+      
+      console.log(`🏥 AI Service health check status: ${response.status}`);
+      return response.ok;
+    } catch (error) {
+      console.error('🏥 AI Service health check failed:', error);
+      return false;
+    }
   }
 }
 

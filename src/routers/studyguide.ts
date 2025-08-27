@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
-import { createInferenceService } from '../lib/inference.js';
 import { title } from 'node:process';
 
 // Mirror Prisma enum to avoid direct type import
@@ -119,6 +118,7 @@ export const studyguide = router({
       });
 
       if (input.title && input.title !== artifact.title) {
+        console.log('rename')
         await ctx.db.artifact.update({
           where: { id: artifact.id },
           data: { title: input.title },
@@ -138,17 +138,6 @@ export const studyguide = router({
       });
 
       return { artifactId: artifact.id, version };
-    }),
-
-  // Generate study guide using AI
-  generate: authedProcedure
-    .input(z.object({
-      workspaceId: z.string().uuid(),
-      content: z.string().min(1),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const inference = createInferenceService(ctx);
-      return inference.generateStudyGuide(input.workspaceId, input.content);
     }),
 });
 

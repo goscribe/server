@@ -1,17 +1,14 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
-import fs from 'fs';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import inference from '../lib/inference.js';
+import { uploadToGCS, generateSignedUrl, deleteFromGCS } from '../lib/storage.js';
 
 // Prisma enum values mapped manually to avoid type import issues in ESM
 const ArtifactType = {
   PODCAST_EPISODE: 'PODCAST_EPISODE',
 } as const;
-
-
 
 // Podcast segment schema
 const podcastSegmentSchema = z.object({
@@ -23,6 +20,7 @@ const podcastSegmentSchema = z.object({
   keyPoints: z.array(z.string()),
   order: z.number().int(),
   audioUrl: z.string().optional(),
+  objectKey: z.string().optional(), // Google Cloud Storage object key
 });
 
 // Podcast creation input schema
@@ -67,7 +65,7 @@ export const podcast = router({
       });
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
       
-      return ctx.db.artifact.findMany({
+      const artifacts = await ctx.db.artifact.findMany({
         where: { 
           workspaceId: input.workspaceId, 
           type: ArtifactType.PODCAST_EPISODE 
@@ -79,6 +77,34 @@ export const podcast = router({
           },
         },
         orderBy: { updatedAt: 'desc' },
+      });
+
+      // Transform to include metadata from the latest version
+      return artifacts.map(artifact => {
+        const latestVersion = artifact.versions[0];
+        if (!latestVersion) return artifact;
+
+        try {
+          const metadata = podcastMetadataSchema.parse(latestVersion.data);
+          return {
+            ...artifact,
+            title: metadata.title, // Use title from version metadata
+            description: metadata.description, // Use description from version metadata
+            metadata,
+            segments: metadata.segments.map(segment => ({
+              id: segment.id,
+              title: segment.title,
+              audioUrl: segment.audioUrl,
+              objectKey: segment.objectKey, // Include objectKey for URL refresh
+              startTime: segment.startTime,
+              duration: segment.duration,
+              order: segment.order,
+            })),
+          };
+        } catch (error) {
+          console.error('Failed to parse podcast metadata:', error);
+          return artifact;
+        }
       });
     }),
 
@@ -108,9 +134,19 @@ export const podcast = router({
       
       return {
         id: episode.id,
-        title: episode.title,
-        description: episode.description,
+        title: metadata.title, // Use title from version metadata
+        description: metadata.description, // Use description from version metadata
         metadata,
+        segments: metadata.segments.map(segment => ({
+          id: segment.id,
+          title: segment.title,
+          content: segment.content,
+          objectKey: segment.objectKey, // Include objectKey for URL refresh
+          startTime: segment.startTime,
+          duration: segment.duration,
+          keyPoints: segment.keyPoints,
+          order: segment.order,
+        })),
         content: latestVersion.content, // transcript
         createdAt: episode.createdAt,
         updatedAt: episode.updatedAt,
@@ -179,14 +215,7 @@ export const podcast = router({
             message: 'Failed to structure podcast content' 
           });
         }
-        console.log(structureContent)
         // Step 2: Generate audio for each segment
-        const audioDir = path.join(process.cwd(), 'public', 'audio', 'podcasts');
-        if (!fs.existsSync(audioDir)) {
-          fs.mkdirSync(audioDir, { recursive: true });
-        }
-
-        const episodeId = uuidv4();
         const segments = [];
         let totalDuration = 0;
         let fullTranscript = '';
@@ -213,27 +242,26 @@ export const podcast = router({
 
             // Parse the response to get the audio URL
             const mp3Data = await mp3Response.json();
+
+            // Check for different possible response structures
+            const audioUrl = mp3Data.audioFile || mp3Data.audioUrl || mp3Data.url || mp3Data.downloadUrl;
             
-
-
-            if (!mp3Data.audioUrl) {
+            if (!audioUrl) {
+              console.error('No audio URL found in Murf response. Available fields:', Object.keys(mp3Data));
               throw new Error('No audio URL in Murf response');
             }
 
-            console.log(mp3Data)
-
             // Download the actual audio file from the URL
-            const audioResponse = await fetch(mp3Data.audioUrl);
+            const audioResponse = await fetch(audioUrl);
             if (!audioResponse.ok) {
               throw new Error(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`);
             }
 
 
-            // Save audio file
-            const segmentFileName = `${episodeId}_segment_${index + 1}.mp3`;
-            const segmentFilePath = path.join(audioDir, segmentFileName);
+            // Upload to Google Cloud Storage
             const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-            fs.writeFileSync(segmentFilePath, audioBuffer);
+            const fileName = `segment_${index + 1}.mp3`;
+            const uploadResult = await uploadToGCS(audioBuffer, fileName, 'audio/mpeg', false); // Keep private
 
             // Estimate duration (roughly 150 words per minute for TTS)
             const wordCount = segment.content.split(' ').length;
@@ -243,7 +271,7 @@ export const podcast = router({
               id: uuidv4(),
               title: segment.title,
               content: segment.content,
-              audioUrl: `/audio/podcasts/${segmentFileName}`,
+              objectKey: uploadResult.objectKey, // Store object key for future operations
               startTime: totalDuration,
               duration: estimatedDuration,
               keyPoints: segment.keyPoints || [],
@@ -313,13 +341,13 @@ export const podcast = router({
           data: {
             workspaceId: input.workspaceId,
             type: ArtifactType.PODCAST_EPISODE,
-            title: episodeTitle,
-            description: input.podcastData.description,
+            title: episodeTitle, // Store basic title for listing/searching
+            description: input.podcastData.description, // Store basic description for listing/searching
             createdById: ctx.session.user.id,
           },
         });
 
-        // Create initial version with metadata
+        // Create initial version with complete metadata
         const metadata = {
           title: episodeTitle,
           description: input.podcastData.description,
@@ -343,8 +371,8 @@ export const podcast = router({
 
         return {
           id: artifact.id,
-          title: artifact.title,
-          description: artifact.description,
+          title: metadata.title,
+          description: metadata.description,
           metadata,
           content: fullTranscript.trim(),
         };
@@ -418,29 +446,29 @@ export const podcast = router({
 
                     // Parse the response to get the audio URL
             const mp3Data = await mp3Response.json();
-            console.log('Murf API response:', mp3Data);
             
-            if (!mp3Data.audioUrl) {
-              console.error('Murf response missing audioUrl:', mp3Data);
+            // Check for different possible response structures
+            const audioUrl = mp3Data.audioFile || mp3Data.audioUrl || mp3Data.url || mp3Data.downloadUrl;
+            
+            if (!audioUrl) {
+              console.error('No audio URL found in Murf response. Available fields:', Object.keys(mp3Data));
               throw new Error('No audio URL in Murf response');
             }
 
         // Download the actual audio file from the URL
-        const audioResponse = await fetch(mp3Data.audioUrl);
+        const audioResponse = await fetch(audioUrl);
         if (!audioResponse.ok) {
           throw new Error(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`);
         }
 
-        // Save new audio file
-        const audioDir = path.join(process.cwd(), 'public', 'audio', 'podcasts');
-        const newFileName = `${input.episodeId}_segment_${segment.order}_${Date.now()}.mp3`;
-        const newFilePath = path.join(audioDir, newFileName);
+        // Upload to Google Cloud Storage
         const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-        fs.writeFileSync(newFilePath, audioBuffer);
+        const fileName = `segment_${segment.order}_${Date.now()}.mp3`;
+        const uploadResult = await uploadToGCS(audioBuffer, fileName, 'audio/mpeg', false); // Keep private
 
         // Update segment data
         segment.content = contentToSpeak;
-        segment.audioUrl = `/audio/podcasts/${newFileName}`;
+        segment.objectKey = uploadResult.objectKey; // Store object key
         
         // Recalculate duration
         const wordCount = contentToSpeak.split(' ').length;
@@ -588,6 +616,7 @@ export const podcast = router({
         },
       });
       
+      // Update the artifact with basic info for listing/searching
       return ctx.db.artifact.update({
         where: { id: input.episodeId },
         data: {
@@ -623,14 +652,14 @@ export const podcast = router({
         const latestVersion = episode.versions[0];
         if (latestVersion) {
           const metadata = podcastMetadataSchema.parse(latestVersion.data);
-          const audioDir = path.join(process.cwd(), 'public');
 
-          // Delete audio files
+          // Delete audio files from Google Cloud Storage
           for (const segment of metadata.segments || []) {
-            if (segment.audioUrl) {
-              const filePath = path.join(audioDir, segment.audioUrl);
-              if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
+            if (segment.objectKey) {
+              try {
+                await deleteFromGCS(segment.objectKey);
+              } catch (error) {
+                console.error(`Failed to delete audio file ${segment.objectKey}:`, error);
               }
             }
           }
@@ -669,4 +698,73 @@ export const podcast = router({
         { id: 'shimmer', name: 'Shimmer', description: 'Bright, energetic voice' },
       ];
     }),
+
+  // Get fresh signed URLs for an episode (doesn't create new version)
+  getSignedUrls: authedProcedure
+    .input(z.object({ episodeId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const episode = await ctx.db.artifact.findFirst({
+        where: { 
+          id: input.episodeId,
+          type: ArtifactType.PODCAST_EPISODE,
+          workspace: { ownerId: ctx.session.user.id }
+        },
+        include: {
+          versions: {
+            orderBy: { version: 'desc' },
+            take: 1,
+          },
+        },
+      });
+      
+      if (!episode) throw new TRPCError({ code: 'NOT_FOUND' });
+      
+      const latestVersion = episode.versions[0];
+      if (!latestVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'No version found' });
+
+      const metadata = podcastMetadataSchema.parse(latestVersion.data);
+      
+      // Generate fresh signed URLs for all segments
+      const segmentsWithUrls = await Promise.all(
+        metadata.segments.map(async (segment) => {
+          if (segment.objectKey) {
+            try {
+              const signedUrl = await generateSignedUrl(segment.objectKey, 24); // 24 hours
+              return {
+                id: segment.id,
+                title: segment.title,
+                audioUrl: signedUrl,
+                startTime: segment.startTime,
+                duration: segment.duration,
+                order: segment.order,
+              };
+            } catch (error) {
+              console.error(`Failed to generate signed URL for segment ${segment.id}:`, error);
+              return {
+                id: segment.id,
+                title: segment.title,
+                audioUrl: null,
+                startTime: segment.startTime,
+                duration: segment.duration,
+                order: segment.order,
+              };
+            }
+          }
+          return {
+            id: segment.id,
+            title: segment.title,
+            audioUrl: null,
+            startTime: segment.startTime,
+            duration: segment.duration,
+            order: segment.order,
+          };
+        })
+      );
+
+      return {
+        segments: segmentsWithUrls,
+      };
+    }),
+
+
 });

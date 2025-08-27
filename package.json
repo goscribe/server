@@ -27,6 +27,7 @@
     "@prisma/client": "^6.14.0",
     "@trpc/server": "^11.5.0",
     "@types/uuid": "^10.0.0",
+    "@vingeray/editorjs-markdown-converter": "^0.1.2",
     "bcryptjs": "^3.0.2",
     "compression": "^1.8.1",
     "cookie": "^1.0.2",
@@ -37,6 +38,8 @@
     "morgan": "^1.10.1",
     "openai": "^5.16.0",
     "prisma": "^6.14.0",
+    "pusher": "^5.2.0",
+    "pusher-js": "^8.4.0",
     "superjson": "^2.2.2",
     "zod": "^4.1.1"
   },
