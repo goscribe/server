@@ -26,6 +26,15 @@ enum Difficulty {
   HARD
 }
 
+enum QuestionType {
+  MULTIPLE_CHOICE
+  TEXT
+  NUMERIC
+  TRUE_FALSE
+  MATCHING
+  FILL_IN_THE_BLANK
+}
+
 //
 // NextAuth-compatible auth models (minimal)
 //
@@ -44,6 +53,7 @@ model User {
   uploads       FileAsset[]       @relation("UserUploads")
   artifacts     Artifact[]        @relation("UserArtifacts")
   versions      ArtifactVersion[] @relation("UserArtifactVersions")
+  worksheetQuestionProgress WorksheetQuestionProgress[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -153,6 +163,12 @@ model Artifact {
   title       String
   isArchived  Boolean      @default(false)
 
+  // Worksheet-specific fields
+  difficulty  Difficulty?  // only meaningful for WORKSHEET
+  estimatedTime String?    // only meaningful for WORKSHEET
+
+  description     String?
+
   createdById String?
   createdBy   User?        @relation("UserArtifacts", fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -211,18 +227,45 @@ model Flashcard {
 // Worksheet Questions (child items of a WORKSHEET Artifact)
 //
 model WorksheetQuestion {
-  id         String    @id @default(cuid())
+  id         String       @id @default(cuid())
   artifactId String
-  artifact   Artifact  @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact   Artifact     @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   prompt     String
   answer     String?
-  difficulty Difficulty @default(MEDIUM)
-  order      Int        @default(0)
+  type       QuestionType @default(TEXT)
+  difficulty Difficulty   @default(MEDIUM)
+  order      Int          @default(0)
 
-  meta       Json?      // e.g., { "type": "MCQ", "choices": ["A","B","C","D"], "correct": 1 }
+  meta       Json?        // e.g., { "choices": ["A","B","C","D"], "correct": 1, "options": [...] }
 
-  createdAt  DateTime   @default(now())
+  createdAt  DateTime     @default(now())
 
   @@index([artifactId])
+  progress   WorksheetQuestionProgress[]
+}
+
+//
+// Per-user progress for Worksheet Questions
+//
+model WorksheetQuestionProgress {
+  id                   String            @id @default(cuid())
+  worksheetQuestionId  String
+  worksheetQuestion    WorksheetQuestion @relation(fields: [worksheetQuestionId], references: [id], onDelete: Cascade)
+
+  userId               String
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  completed            Boolean           @default(false)
+  userAnswer           String?
+  completedAt          DateTime?
+  attempts             Int               @default(0)
+  timeSpentSec         Int?
+  meta                 Json?
+
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@unique([worksheetQuestionId, userId])
+  @@index([userId])
 }

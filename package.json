@@ -1,6 +1,6 @@
 {
   "name": "@goscribe/server",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,8 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "npx prisma generate && tsc -p .",
-    "start": "node --experimental-specifier-resolution=node dist/server.js"
+    "start": "node --experimental-specifier-resolution=node dist/server.js",
+    "seed": "node --experimental-specifier-resolution=node prisma/seed.mjs"
   },
   "author": "",
   "license": "MIT",
@@ -22,7 +23,7 @@
     "@auth/express": "^0.11.0",
     "@auth/prisma-adapter": "^2.10.0",
     "@google-cloud/storage": "^7.17.0",
-    "@goscribe/server": "^1.0.7",
+    "@goscribe/server": "^1.0.8",
     "@prisma/client": "^6.14.0",
     "@trpc/server": "^11.5.0",
     "bcryptjs": "^3.0.2",

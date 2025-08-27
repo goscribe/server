@@ -7,20 +7,33 @@ import { ArtifactType } from '@prisma/client';
 export const workspace = router({
   // List current user's workspaces
   list: authedProcedure
-    .query(async ({ ctx }) => {
+    .input(z.object({
+        parentId: z.string().optional(),
+     }))
+    .query(async ({ ctx, input }) => {
       const workspaces = await ctx.db.workspace.findMany({
         where: {
           ownerId: ctx.session.user.id,
+          folderId: input.parentId ?? null,
         },
         orderBy: { updatedAt: 'desc' },
       });
-      return workspaces;
+
+      const folders = await ctx.db.folder.findMany({
+        where: {
+          ownerId: ctx.session.user.id,
+          parentId: input.parentId ?? null,
+        },
+      });
+
+      return { workspaces, folders };
     }),
     
   create: authedProcedure
     .input(z.object({
         name: z.string().min(1).max(100),
         description: z.string().max(500).optional(),
+        parentId: z.string().optional(),
      }))
     .mutation(async ({ ctx, input}) => {
       const ws = await ctx.db.workspace.create({
@@ -28,6 +41,7 @@ export const workspace = router({
           title: input.name,
           description: input.description,
           ownerId: ctx.session.user.id,
+          folderId: input.parentId ?? null,
           artifacts: {
             create: {
               type: ArtifactType.FLASHCARD_SET,
@@ -44,20 +58,40 @@ export const workspace = router({
       });
       return ws;
     }),
+  createFolder: authedProcedure
+    .input(z.object({
+        name: z.string().min(1).max(100),
+        parentId: z.string().optional(),
+     }))
+    .mutation(async ({ ctx, input }) => {
+      const folder = await ctx.db.folder.create({
+        data: {
+          name: input.name,
+          ownerId: ctx.session.user.id,
+          parentId: input.parentId ?? null,
+        },
+      });
+      return folder;
+    }),
   get: authedProcedure
     .input(z.object({
-        id: z.string().uuid(),
+        id: z.string(),
      }))
     .query(async ({ ctx, input }) => {
       const ws = await ctx.db.workspace.findFirst({
         where: { id: input.id, ownerId: ctx.session.user.id },
+        include: {
+          artifacts: true,
+          folder: true,
+          uploads: true,
+        },
       });
       if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
       return ws;
     }),
   update: authedProcedure
     .input(z.object({
-        id: z.string().uuid(),
+        id: z.string(),
         name: z.string().min(1).max(100).optional(),
         description: z.string().max(500).optional(),
      }))
@@ -77,7 +111,7 @@ export const workspace = router({
     }), 
     delete: authedProcedure
     .input(z.object({
-        id: z.string().uuid(),
+        id: z.string(),
      }))
     .mutation(async ({ ctx, input }) => {
       const deleted = await ctx.db.workspace.deleteMany({
@@ -88,7 +122,7 @@ export const workspace = router({
     }),
     uploadFiles: authedProcedure
     .input(z.object({
-        id: z.string().uuid(),
+        id: z.string(),
         files: z.array(
           z.object({
             filename: z.string().min(1).max(255),
@@ -144,8 +178,8 @@ export const workspace = router({
     }),
     deleteFiles: authedProcedure
     .input(z.object({
-        fileId: z.array(z.string().uuid()),
-        id: z.string().uuid(),
+        fileId: z.array(z.string()),
+        id: z.string(),
      }))
     .mutation(async ({ ctx, input }) => {
       // ensure files are in the user's workspace

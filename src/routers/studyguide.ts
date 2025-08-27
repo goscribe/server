@@ -13,8 +13,8 @@ export const studyguide = router({
   get: authedProcedure
     .input(
       z.object({
-        workspaceId: z.string().uuid().optional(),
-        studyGuideId: z.string().uuid().optional(),
+        workspaceId: z.string().optional(),
+        studyGuideId: z.string().optional(),
       }).refine((v) => Boolean(v.workspaceId) !== Boolean(v.studyGuideId), {
         message: 'Provide exactly one of workspaceId or studyGuideId',
         path: ['workspaceId'],
@@ -58,7 +58,7 @@ export const studyguide = router({
   edit: authedProcedure
     .input(
       z.object({
-        studyGuideId: z.string().uuid(),
+        studyGuideId: z.string(),
         content: z.string().min(1),
         data: z.record(z.string(), z.unknown()).optional(),
       })
