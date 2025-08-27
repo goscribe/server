@@ -6,6 +6,7 @@ import { flashcards } from './flashcards.js';
 import { worksheets } from './worksheets.js';
 import { studyguide } from './studyguide.js';
 import { aiSession } from './ai-session.js';
+import { podcast } from './podcast.js';
 
 export const appRouter = router({
   auth,
@@ -14,6 +15,7 @@ export const appRouter = router({
   worksheets,
   studyguide,
   aiSession,
+  podcast,
 });
 
 // Export type for client inference

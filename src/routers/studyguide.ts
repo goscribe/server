@@ -54,35 +54,51 @@ export const studyguide = router({
       return { artifactId: artifact.id, title: artifact.title, latestVersion };
     }),
 
-  // Edit study guide content by creating a new version
+  // Edit study guide content by creating a new version, or create if doesn't exist
   edit: authedProcedure
     .input(
       z.object({
-        studyGuideId: z.string(),
+        workspaceId: z.string(),
+        studyGuideId: z.string().optional(),
         content: z.string().min(1),
         data: z.record(z.string(), z.unknown()).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // ensure ownership
-      const artifact = await ctx.db.artifact.findFirst({
-        where: {
-          id: input.studyGuideId,
-          type: ArtifactType.STUDY_GUIDE,
-          workspace: { ownerId: ctx.session.user.id },
-        },
-      });
-      if (!artifact) throw new TRPCError({ code: 'NOT_FOUND' });
+      let artifact;
+      
+      if (input.studyGuideId) {
+        // Try to find existing study guide
+        artifact = await ctx.db.artifact.findFirst({
+          where: {
+            id: input.studyGuideId,
+            type: ArtifactType.STUDY_GUIDE,
+            workspace: { ownerId: ctx.session.user.id },
+          },
+        });
+      }
+      
+      // If no study guide found, create a new one
+      if (!artifact) {
+        artifact = await ctx.db.artifact.create({
+          data: {
+            workspaceId: input.workspaceId,
+            type: ArtifactType.STUDY_GUIDE,
+            title: 'Study Guide',
+            createdById: ctx.session.user.id,
+          },
+        });
+      }
 
       const last = await ctx.db.artifactVersion.findFirst({
-        where: { artifactId: input.studyGuideId },
+        where: { artifactId: artifact.id },
         orderBy: { version: 'desc' },
       });
       const nextVersion = (last?.version ?? 0) + 1;
 
       const version = await ctx.db.artifactVersion.create({
         data: {
-          artifactId: input.studyGuideId,
+          artifactId: artifact.id,
           content: input.content,
           data: input.data as any,
           version: nextVersion,
@@ -90,7 +106,7 @@ export const studyguide = router({
         },
       });
 
-      return { artifactId: input.studyGuideId, version };
+      return { artifactId: artifact.id, version };
     }),
 
   // Generate study guide using AI
