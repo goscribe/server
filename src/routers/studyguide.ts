@@ -13,35 +13,14 @@ export const studyguide = router({
   get: authedProcedure
     .input(
       z.object({
-        workspaceId: z.string().optional(),
-        studyGuideId: z.string().optional(),
-      }).refine((v) => Boolean(v.workspaceId) !== Boolean(v.studyGuideId), {
-        message: 'Provide exactly one of workspaceId or studyGuideId',
-        path: ['workspaceId'],
+        workspaceId: z.string(),
       })
     )
     .query(async ({ ctx, input }) => {
-      if (input.workspaceId) {
-        const artifact = await ctx.db.artifact.findFirst({
-          where: {
-            workspaceId: input.workspaceId,
-            type: ArtifactType.STUDY_GUIDE,
-            workspace: { ownerId: ctx.session.user.id },
-          },
-          include: {
-            versions: { orderBy: { version: 'desc' }, take: 1 },
-          },
-          orderBy: { updatedAt: 'desc' },
-        });
-        if (!artifact) throw new TRPCError({ code: 'NOT_FOUND' });
-        const latestVersion = artifact.versions[0] ?? null;
-        return { artifactId: artifact.id, title: artifact.title, latestVersion };
-      }
-
       // by studyGuideId (artifact id)
-      const artifact = await ctx.db.artifact.findFirst({
+      let artifact = await ctx.db.artifact.findFirst({
         where: {
-          id: input.studyGuideId!,
+          id: input.workspaceId!,
           type: ArtifactType.STUDY_GUIDE,
           workspace: { ownerId: ctx.session.user.id },
         },
@@ -49,7 +28,19 @@ export const studyguide = router({
           versions: { orderBy: { version: 'desc' }, take: 1 },
         },
       });
-      if (!artifact) throw new TRPCError({ code: 'NOT_FOUND' });
+      if (!artifact) {
+        artifact = await ctx.db.artifact.create({
+          data: {
+            workspaceId: input.workspaceId,
+            type: ArtifactType.STUDY_GUIDE,
+            title: 'Study Guide',
+            createdById: ctx.session.user.id,
+          },
+          include: {
+            versions: { orderBy: { version: 'desc' }, take: 1 },
+          }
+        });
+      }
       const latestVersion = artifact.versions[0] ?? null;
       return { artifactId: artifact.id, title: artifact.title, latestVersion };
     }),
