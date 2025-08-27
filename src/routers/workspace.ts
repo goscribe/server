@@ -6,6 +6,45 @@ import { ArtifactType } from '@prisma/client';
 import { aiSessionService } from '../lib/ai-session.js';
 import PusherService from '../lib/pusher.js';
 
+// Helper function to calculate search relevance score
+function calculateRelevance(query: string, ...texts: (string | null | undefined)[]): number {
+  const queryLower = query.toLowerCase();
+  let score = 0;
+  
+  for (const text of texts) {
+    if (!text) continue;
+    
+    const textLower = text.toLowerCase();
+    
+    // Exact match gets highest score
+    if (textLower.includes(queryLower)) {
+      score += 10;
+    }
+    
+    // Word boundary matches get good score
+    const words = queryLower.split(/\s+/);
+    for (const word of words) {
+      if (word.length > 2 && textLower.includes(word)) {
+        score += 5;
+      }
+    }
+    
+    // Partial matches get lower score
+    const queryChars = queryLower.split('');
+    let consecutiveMatches = 0;
+    for (const char of queryChars) {
+      if (textLower.includes(char)) {
+        consecutiveMatches++;
+      } else {
+        consecutiveMatches = 0;
+      }
+    }
+    score += consecutiveMatches * 0.1;
+  }
+  
+  return score;
+}
+
 export const workspace = router({
   // List current user's workspaces
   list: authedProcedure
@@ -530,4 +569,229 @@ export const workspace = router({
       
       return results;
     }),
+      search: authedProcedure
+        .input(z.object({
+          query: z.string(),
+          workspaceId: z.string().optional(),
+          types: z.array(z.enum(['STUDY_GUIDE', 'FLASHCARD_SET', 'WORKSHEET', 'MEETING_SUMMARY', 'PODCAST_EPISODE'])).optional(),
+          limit: z.number().min(1).max(100).default(20),
+        }))
+        .query(async ({ ctx, input }) => {
+          const { query, workspaceId, types, limit } = input;
+          
+          // Build base where clause for workspaces the user has access to
+          const workspaceWhere = workspaceId 
+            ? { id: workspaceId, ownerId: ctx.session.user.id }
+            : { ownerId: ctx.session.user.id };
+          
+          // Build artifact type filter
+          const artifactTypeFilter = types && types.length > 0 
+            ? { type: { in: types } }
+            : {};
+          
+          // Search in artifacts (titles and descriptions)
+          const artifacts = await ctx.db.artifact.findMany({
+            where: {
+              workspace: workspaceWhere,
+              ...artifactTypeFilter,
+              OR: [
+                { title: { contains: query, mode: 'insensitive' } },
+                { description: { contains: query, mode: 'insensitive' } },
+              ],
+            },
+            include: {
+              workspace: {
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                }
+              },
+              versions: {
+                take: 1,
+                orderBy: { version: 'desc' },
+                select: {
+                  content: true,
+                  version: true,
+                }
+              },
+              flashcards: {
+                take: 5,
+                select: {
+                  front: true,
+                  back: true,
+                }
+              },
+              questions: {
+                take: 5,
+                select: {
+                  prompt: true,
+                  answer: true,
+                }
+              },
+            },
+            take: limit,
+            orderBy: { updatedAt: 'desc' },
+          });
+          
+          // Search in artifact versions (content)
+          const artifactVersions = await ctx.db.artifactVersion.findMany({
+            where: {
+              artifact: {
+                workspace: workspaceWhere,
+                ...artifactTypeFilter,
+              },
+              content: { contains: query, mode: 'insensitive' },
+            },
+            include: {
+              artifact: {
+                include: {
+                  workspace: {
+                    select: {
+                      id: true,
+                      title: true,
+                      description: true,
+                    }
+                  },
+                }
+              },
+            },
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+          });
+          
+          // Search in flashcards
+          const flashcards = await ctx.db.flashcard.findMany({
+            where: {
+              artifact: {
+                workspace: workspaceWhere,
+                ...artifactTypeFilter,
+              },
+              OR: [
+                { front: { contains: query, mode: 'insensitive' } },
+                { back: { contains: query, mode: 'insensitive' } },
+              ],
+            },
+            include: {
+              artifact: {
+                include: {
+                  workspace: {
+                    select: {
+                      id: true,
+                      title: true,
+                      description: true,
+                    }
+                  },
+                }
+              },
+            },
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+          });
+          
+          // Search in worksheet questions
+          const worksheetQuestions = await ctx.db.worksheetQuestion.findMany({
+            where: {
+              artifact: {
+                workspace: workspaceWhere,
+                ...artifactTypeFilter,
+              },
+              OR: [
+                { prompt: { contains: query, mode: 'insensitive' } },
+                { answer: { contains: query, mode: 'insensitive' } },
+              ],
+            },
+            include: {
+              artifact: {
+                include: {
+                  workspace: {
+                    select: {
+                      id: true,
+                      title: true,
+                      description: true,
+                    }
+                  },
+                }
+              },
+            },
+            take: limit,
+            orderBy: { createdAt: 'desc' },
+          });
+          
+          // Group results by type and add relevance scoring
+          const results = {
+            artifacts: artifacts.map(artifact => ({
+              type: 'artifact' as const,
+              id: artifact.id,
+              title: artifact.title,
+              description: artifact.description,
+              artifactType: artifact.type,
+              workspace: artifact.workspace,
+              latestVersion: artifact.versions[0],
+              sampleFlashcards: artifact.flashcards,
+              sampleQuestions: artifact.questions,
+              relevance: calculateRelevance(query, artifact.title, artifact.description),
+              updatedAt: artifact.updatedAt,
+            })),
+            
+            versions: artifactVersions.map(version => ({
+              type: 'version' as const,
+              id: version.id,
+              artifactId: version.artifact.id,
+              artifactTitle: version.artifact.title,
+              artifactType: version.artifact.type,
+              workspace: version.artifact.workspace,
+              content: version.content,
+              version: version.version,
+              relevance: calculateRelevance(query, version.content),
+              createdAt: version.createdAt,
+            })),
+            
+            flashcards: flashcards.map(card => ({
+              type: 'flashcard' as const,
+              id: card.id,
+              front: card.front,
+              back: card.back,
+              artifactId: card.artifact.id,
+              artifactTitle: card.artifact.title,
+              artifactType: card.artifact.type,
+              workspace: card.artifact.workspace,
+              relevance: calculateRelevance(query, card.front, card.back),
+              createdAt: card.createdAt,
+            })),
+            
+            worksheetQuestions: worksheetQuestions.map(question => ({
+              type: 'worksheet_question' as const,
+              id: question.id,
+              prompt: question.prompt,
+              answer: question.answer,
+              artifactId: question.artifact.id,
+              artifactTitle: question.artifact.title,
+              artifactType: question.artifact.type,
+              workspace: question.artifact.workspace,
+              relevance: calculateRelevance(query, question.prompt, question.answer),
+              createdAt: question.createdAt,
+            })),
+          };
+          
+          // Combine all results and sort by relevance
+          const allResults = [
+            ...results.artifacts,
+            ...results.versions,
+            ...results.flashcards,
+            ...results.worksheetQuestions,
+          ].sort((a, b) => b.relevance - a.relevance);
+          
+          return {
+            query,
+            totalResults: allResults.length,
+            results: allResults.slice(0, limit),
+            breakdown: {
+              artifacts: results.artifacts.length,
+              versions: results.versions.length,
+              flashcards: results.flashcards.length,
+              worksheetQuestions: results.worksheetQuestions.length,
+            },
+          };
+        }),
 });
