@@ -2,11 +2,24 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
 import { createInferenceService } from '../lib/inference.js';
+import { title } from 'node:process';
 
 // Mirror Prisma enum to avoid direct type import
 const ArtifactType = {
   STUDY_GUIDE: 'STUDY_GUIDE',
 } as const;
+
+const initializeEditorJsEmptyBlock = () => ({
+  time: Date.now(),
+  blocks: [
+    {
+      id: 'initial',
+      type: 'paragraph',
+      data: { text: 'Start writing your study guide...' },
+    },
+  ],
+  version: '2.27.0',
+});
 
 export const studyguide = router({
   // Get latest study guide for a workspace or a specific study guide by ID
@@ -20,7 +33,7 @@ export const studyguide = router({
       // by studyGuideId (artifact id)
       let artifact = await ctx.db.artifact.findFirst({
         where: {
-          id: input.workspaceId!,
+          workspaceId: input.workspaceId!,
           type: ArtifactType.STUDY_GUIDE,
           workspace: { ownerId: ctx.session.user.id },
         },
@@ -28,6 +41,8 @@ export const studyguide = router({
           versions: { orderBy: { version: 'desc' }, take: 1 },
         },
       });
+
+      console.log('artifact', artifact);
       if (!artifact) {
         artifact = await ctx.db.artifact.create({
           data: {
@@ -35,6 +50,13 @@ export const studyguide = router({
             type: ArtifactType.STUDY_GUIDE,
             title: 'Study Guide',
             createdById: ctx.session.user.id,
+            versions: {
+              create: {
+                content: `${JSON.stringify(initializeEditorJsEmptyBlock())}`,
+                version: 1,
+                createdById: ctx.session.user.id,
+              }
+            }
           },
           include: {
             versions: { orderBy: { version: 'desc' }, take: 1 },
@@ -53,6 +75,7 @@ export const studyguide = router({
         studyGuideId: z.string().optional(),
         content: z.string().min(1),
         data: z.record(z.string(), z.unknown()).optional(),
+        title: z.string().min(1).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -63,6 +86,15 @@ export const studyguide = router({
         artifact = await ctx.db.artifact.findFirst({
           where: {
             id: input.studyGuideId,
+            type: ArtifactType.STUDY_GUIDE,
+            workspace: { ownerId: ctx.session.user.id },
+          },
+        });
+      } else {
+        // Find by workspace if no specific studyGuideId provided
+        artifact = await ctx.db.artifact.findFirst({
+          where: {
+            workspaceId: input.workspaceId,
             type: ArtifactType.STUDY_GUIDE,
             workspace: { ownerId: ctx.session.user.id },
           },
@@ -85,6 +117,14 @@ export const studyguide = router({
         where: { artifactId: artifact.id },
         orderBy: { version: 'desc' },
       });
+
+      if (input.title && input.title !== artifact.title) {
+        await ctx.db.artifact.update({
+          where: { id: artifact.id },
+          data: { title: input.title },
+        });
+      }
+      
       const nextVersion = (last?.version ?? 0) + 1;
 
       const version = await ctx.db.artifactVersion.create({
