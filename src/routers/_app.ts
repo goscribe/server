@@ -5,6 +5,7 @@ import { workspace } from './workspace.js';
 import { flashcards } from './flashcards.js';
 import { worksheets } from './worksheets.js';
 import { studyguide } from './studyguide.js';
+import { aiSession } from './ai-session.js';
 
 export const appRouter = router({
   auth,
@@ -12,6 +13,7 @@ export const appRouter = router({
   flashcards,
   worksheets,
   studyguide,
+  aiSession,
 });
 
 // Export type for client inference

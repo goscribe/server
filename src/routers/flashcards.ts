@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
+import { createInferenceService } from '../lib/inference.js';
 // Prisma enum values mapped manually to avoid type import issues in ESM
 const ArtifactType = {
   STUDY_GUIDE: 'STUDY_GUIDE',
@@ -105,6 +106,28 @@ export const flashcards = router({
       if (!card) throw new TRPCError({ code: 'NOT_FOUND' });
       await ctx.db.flashcard.delete({ where: { id: input.cardId } });
       return true;
+    }),
+
+  deleteSet: authedProcedure
+    .input(z.object({ setId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await ctx.db.artifact.deleteMany({
+        where: { id: input.setId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } },
+      });
+      if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
+      return true;
+    }),
+
+  // Generate flashcards using AI
+  generate: authedProcedure
+    .input(z.object({
+      workspaceId: z.string().uuid(),
+      content: z.string().min(1),
+      count: z.number().int().min(1).max(50).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const inference = createInferenceService(ctx);
+      return inference.generateFlashcards(input.workspaceId, input.content, input.count);
     }),
 });
 

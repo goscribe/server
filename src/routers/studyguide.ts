@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
+import { createInferenceService } from '../lib/inference.js';
 
 // Mirror Prisma enum to avoid direct type import
 const ArtifactType = {
@@ -90,6 +91,17 @@ export const studyguide = router({
       });
 
       return { artifactId: input.studyGuideId, version };
+    }),
+
+  // Generate study guide using AI
+  generate: authedProcedure
+    .input(z.object({
+      workspaceId: z.string().uuid(),
+      content: z.string().min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const inference = createInferenceService(ctx);
+      return inference.generateStudyGuide(input.workspaceId, input.content);
     }),
 });
 
