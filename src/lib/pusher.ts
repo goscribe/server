@@ -59,6 +59,15 @@ export class PusherService {
     });
   }
 
+  // Emit podcast completion
+  static async emitPodcastComplete(workspaceId: string, artifact: any) {
+    await this.emitAnalysisComplete(workspaceId, 'podcast', {
+      artifactId: artifact.id,
+      title: artifact.title,
+      status: 'completed'
+    });
+  }
+
   // Emit overall analysis completion
   static async emitOverallComplete(workspaceId: string, filename: string, artifacts: any) {
     await this.emitTaskComplete(workspaceId, 'analysis_ended', {
