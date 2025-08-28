@@ -80,33 +80,104 @@ export const podcast = router({
         orderBy: { updatedAt: 'desc' },
       });
 
-      // Transform to include metadata from the latest version
-      return artifacts.map(artifact => {
-        const latestVersion = artifact.versions[0];
-        if (!latestVersion) return artifact;
+      // Transform to include metadata from the latest version with fresh signed URLs
+      const episodesWithUrls = await Promise.all(
+        artifacts.map(async (artifact) => {
+          const latestVersion = artifact.versions[0];
+          if (!latestVersion) {
+            // Return a consistent structure even when no version exists
+            return {
+              id: artifact.id,
+              title: artifact.title || 'Untitled Episode',
+              description: artifact.description || null,
+              metadata: null,
+              segments: [],
+              createdAt: artifact.createdAt,
+              updatedAt: artifact.updatedAt,
+              workspaceId: artifact.workspaceId,
+              type: artifact.type,
+              createdById: artifact.createdById,
+              isArchived: artifact.isArchived,
+            };
+          }
 
-        try {
-          const metadata = podcastMetadataSchema.parse(latestVersion.data);
-          return {
-            ...artifact,
-            title: metadata.title, // Use title from version metadata
-            description: metadata.description, // Use description from version metadata
-            metadata,
-            segments: metadata.segments.map(segment => ({
-              id: segment.id,
-              title: segment.title,
-              audioUrl: segment.audioUrl,
-              objectKey: segment.objectKey, // Include objectKey for URL refresh
-              startTime: segment.startTime,
-              duration: segment.duration,
-              order: segment.order,
-            })),
-          };
-        } catch (error) {
-          console.error('Failed to parse podcast metadata:', error);
-          return artifact;
-        }
-      });
+          try {
+            const metadata = podcastMetadataSchema.parse(latestVersion.data);
+            
+            // Generate fresh signed URLs for all segments
+            const segmentsWithUrls = await Promise.all(
+              metadata.segments.map(async (segment) => {
+                if (segment.objectKey) {
+                  try {
+                    const signedUrl = await generateSignedUrl(segment.objectKey, 24); // 24 hours
+                    return {
+                      id: segment.id,
+                      title: segment.title,
+                      audioUrl: signedUrl,
+                      objectKey: segment.objectKey,
+                      startTime: segment.startTime,
+                      duration: segment.duration,
+                      order: segment.order,
+                    };
+                  } catch (error) {
+                    console.error(`Failed to generate signed URL for segment ${segment.id}:`, error);
+                    return {
+                      id: segment.id,
+                      title: segment.title,
+                      audioUrl: null,
+                      objectKey: segment.objectKey,
+                      startTime: segment.startTime,
+                      duration: segment.duration,
+                      order: segment.order,
+                    };
+                  }
+                }
+                return {
+                  id: segment.id,
+                  title: segment.title,
+                  audioUrl: null,
+                  objectKey: segment.objectKey,
+                  startTime: segment.startTime,
+                  duration: segment.duration,
+                  order: segment.order,
+                };
+              })
+            );
+
+            return {
+              id: artifact.id,
+              title: metadata.title, // Use title from version metadata
+              description: metadata.description, // Use description from version metadata
+              metadata: metadata,
+              segments: segmentsWithUrls,
+              createdAt: artifact.createdAt,
+              updatedAt: artifact.updatedAt,
+              workspaceId: artifact.workspaceId,
+              type: artifact.type,
+              createdById: artifact.createdById,
+              isArchived: artifact.isArchived,
+            };
+          } catch (error) {
+            console.error('Failed to parse podcast metadata:', error);
+            // Return a consistent structure even when metadata parsing fails
+            return {
+              id: artifact.id,
+              title: artifact.title || 'Untitled Episode',
+              description: artifact.description || null,
+              metadata: null,
+              segments: [],
+              createdAt: artifact.createdAt,
+              updatedAt: artifact.updatedAt,
+              workspaceId: artifact.workspaceId,
+              type: artifact.type,
+              createdById: artifact.createdById,
+              isArchived: artifact.isArchived,
+            };
+          }
+        })
+      );
+
+      return episodesWithUrls;
     }),
 
   // Get a specific podcast episode with segments and signed URLs
