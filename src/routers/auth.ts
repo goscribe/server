@@ -74,7 +74,7 @@ export const auth = router({
         secure: isProduction, // true for production/HTTPS, false for localhost
         sameSite: isProduction ? "none" : "lax", // none for cross-origin, lax for same-origin
         path: "/",
-        domain: isProduction ? "server-w8mz.onrender.com/" : undefined,
+        domain: isProduction ? "server-w8mz.onrender.com" : undefined,
         maxAge: 60 * 60 * 24 * 30, // 30 days
       });
       
