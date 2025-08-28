@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
 import createInferenceService from '../lib/inference.js';
+import { aiSessionService } from '../lib/ai-session.js';
+import PusherService from '../lib/pusher.js';
 // Prisma enum values mapped manually to avoid type import issues in ESM
 const ArtifactType = {
   STUDY_GUIDE: 'STUDY_GUIDE',
@@ -116,6 +118,135 @@ export const flashcards = router({
       });
       if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;
+    }),
+
+  // Generate a flashcard set from a user prompt
+  generateFromPrompt: authedProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+      prompt: z.string().min(1),
+      numCards: z.number().int().min(1).max(50).default(10),
+      difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
+      title: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      // Verify workspace ownership
+      const workspace = await ctx.db.workspace.findFirst({
+        where: { id: input.workspaceId, ownerId: ctx.session.user.id },
+      });
+      if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
+
+      // Pusher start
+      await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_load_start', { source: 'prompt' });
+      const flashcardCurrent = await ctx.db.artifact.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          type: ArtifactType.FLASHCARD_SET,
+        },
+        select: {
+          flashcards: true,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+
+      const formattedPreviousCards = flashcardCurrent?.flashcards.map((card) => ({
+        front: card.front,
+        back: card.back,
+      }));
+
+
+      const partialPrompt = `
+      This is the users previous flashcards, avoid repeating any existing cards.
+      Please generate ${input.numCards} new cards,
+      Of a ${input.difficulty} difficulty,
+      Of a ${input.tags?.join(', ')} tag,
+      Of a ${input.title} title.
+      ${formattedPreviousCards?.map((card) => `Front: ${card.front}\nBack: ${card.back}`).join('\n')}
+
+      The user has also left you this prompt: ${input.prompt}
+      `
+      // Init AI session and seed with prompt as instruction
+      const session = await aiSessionService.initSession(input.workspaceId);
+      await aiSessionService.setInstruction(session.id, partialPrompt);
+
+      await aiSessionService.startLLMSession(session.id);
+      
+      const currentCards = flashcardCurrent?.flashcards.length || 0;
+      const newCards = input.numCards - currentCards;
+
+      // Generate
+      await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_info', { status: 'generating', numCards: input.numCards, difficulty: input.difficulty });
+      const content = await aiSessionService.generateFlashcardQuestions(session.id, input.numCards, input.difficulty);
+
+      // Previous cards
+
+      // Create artifact
+      const artifact = await ctx.db.artifact.create({
+        data: {
+          workspaceId: input.workspaceId,
+          type: ArtifactType.FLASHCARD_SET,
+          title: input.title || `Flashcards - ${new Date().toLocaleString()}`,
+          createdById: ctx.session.user.id,
+          flashcards: {
+            create: flashcardCurrent?.flashcards.map((card) => ({
+              front: card.front,
+              back: card.back,
+            })),
+          },
+        },
+      });
+
+      // Parse and create cards
+      let createdCards = 0;
+      try {
+        const flashcardData = JSON.parse(content);
+        for (let i = 0; i < Math.min(flashcardData.length, input.numCards); i++) {
+          const card = flashcardData[i];
+          const front = card.term || card.front || card.question || card.prompt || `Question ${i + 1}`;
+          const back = card.definition || card.back || card.answer || card.solution || `Answer ${i + 1}`;
+          await ctx.db.flashcard.create({
+            data: {
+              artifactId: artifact.id,
+              front,
+              back,
+              order: i,
+              tags: input.tags ?? ['ai-generated', input.difficulty],
+            },
+          });
+          createdCards++;
+        }
+      } catch {
+        // Fallback to text parsing if JSON fails
+        const lines = content.split('\n').filter(line => line.trim());
+        for (let i = 0; i < Math.min(lines.length, input.numCards); i++) {
+          const line = lines[i];
+          if (line.includes(' - ')) {
+            const [front, back] = line.split(' - ');
+            await ctx.db.flashcard.create({
+              data: {
+                artifactId: artifact.id,
+                front: front.trim(),
+                back: back.trim(),
+                order: i,
+                tags: input.tags ?? ['ai-generated', input.difficulty],
+              },
+            });
+            createdCards++;
+          }
+        }
+      }
+
+      // Pusher complete
+      await PusherService.emitFlashcardComplete(input.workspaceId, artifact);
+
+      // Cleanup AI session (best-effort)
+      aiSessionService.deleteSession(session.id);
+
+      return { artifact, createdCards };
     }),
 });
 

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
+import { aiSessionService } from '../lib/ai-session.js';
+import PusherService from '../lib/pusher.js';
 
 // Avoid importing Prisma enums directly; mirror values as string literals
 const ArtifactType = {
@@ -382,6 +384,93 @@ export const worksheets = router({
       });
       if (deleted.count === 0) throw new TRPCError({ code: 'NOT_FOUND' });
       return true;
+    }),
+
+  // Generate a worksheet from a user prompt
+  generateFromPrompt: authedProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+      prompt: z.string().min(1),
+      numQuestions: z.number().int().min(1).max(20).default(8),
+      difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
+      title: z.string().optional(),
+      estimatedTime: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const workspace = await ctx.db.workspace.findFirst({ where: { id: input.workspaceId, ownerId: ctx.session.user.id } });
+      if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
+
+      await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_load_start', { source: 'prompt' });
+
+      const session = await aiSessionService.initSession(input.workspaceId);
+      await aiSessionService.setInstruction(session.id, `Create a worksheet with ${input.numQuestions} questions at ${input.difficulty} difficulty from this prompt. Return JSON.\n\nPrompt:\n${input.prompt}`);
+      await aiSessionService.startLLMSession(session.id);
+
+      const content = await aiSessionService.generateWorksheetQuestions(session.id, input.numQuestions, input.difficulty);
+      await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: content.length });
+
+      const artifact = await ctx.db.artifact.create({
+        data: {
+          workspaceId: input.workspaceId,
+          type: ArtifactType.WORKSHEET,
+          title: input.title || `Worksheet - ${new Date().toLocaleString()}`,
+          createdById: ctx.session.user.id,
+          difficulty: (input.difficulty.toUpperCase()) as any,
+          estimatedTime: input.estimatedTime,
+        },
+      });
+
+      try {
+        const worksheetData = JSON.parse(content);
+        let actualWorksheetData = worksheetData;
+        if (worksheetData.last_response) {
+          try { actualWorksheetData = JSON.parse(worksheetData.last_response); } catch {}
+        }
+        const problems = actualWorksheetData.problems || actualWorksheetData.questions || actualWorksheetData || [];
+        for (let i = 0; i < Math.min(problems.length, input.numQuestions); i++) {
+          const problem = problems[i];
+          const prompt = problem.question || problem.prompt || `Question ${i + 1}`;
+          const answer = problem.answer || problem.solution || `Answer ${i + 1}`;
+          const type = problem.type || 'TEXT';
+          const options = problem.options || [];
+          await ctx.db.worksheetQuestion.create({
+            data: {
+              artifactId: artifact.id,
+              prompt,
+              answer,
+              difficulty: (input.difficulty.toUpperCase()) as any,
+              order: i,
+              meta: { 
+                type,
+                options: options.length > 0 ? options : undefined,
+              },
+            },
+          });
+        }
+      } catch {
+        const lines = content.split('\n').filter(line => line.trim());
+        for (let i = 0; i < Math.min(lines.length, input.numQuestions); i++) {
+          const line = lines[i];
+          if (line.includes(' - ')) {
+            const [q, a] = line.split(' - ');
+            await ctx.db.worksheetQuestion.create({
+              data: {
+                artifactId: artifact.id,
+                prompt: q.trim(),
+                answer: a.trim(),
+                difficulty: (input.difficulty.toUpperCase()) as any,
+                order: i,
+                meta: { type: 'TEXT' },
+              },
+            });
+          }
+        }
+      }
+
+      await PusherService.emitWorksheetComplete(input.workspaceId, artifact);
+      aiSessionService.deleteSession(session.id);
+
+      return { artifact };
     }),
 });
 

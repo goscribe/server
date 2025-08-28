@@ -9,6 +9,8 @@ import PusherService from '../lib/pusher.js';
 // Prisma enum values mapped manually to avoid type import issues in ESM
 const ArtifactType = {
   PODCAST_EPISODE: 'PODCAST_EPISODE',
+  STUDY_GUIDE: 'STUDY_GUIDE',
+  FLASHCARD_SET: 'FLASHCARD_SET',
 } as const;
 
 // Podcast segment schema
@@ -280,10 +282,26 @@ export const podcast = router({
           title: input.podcastData.title 
         });
 
+        const studyGuide = await ctx.db.artifact.findFirst({
+          where: {
+            workspaceId: input.workspaceId,
+            type: ArtifactType.STUDY_GUIDE,
+          },
+          include: {
+            versions: {
+              orderBy: { version: 'desc' },
+              take: 1,
+            },
+          },
+        });
+
+        const latestVersion = studyGuide?.versions[0];
+        const studyGuideContent = latestVersion?.content || '';
+
         // Step 1: Structure the content into segments using inference API
         const structurePrompt = `You are a podcast content structuring assistant. Given a user prompt, create a complete podcast episode with engaging content and logical segments.
         
-        Based on the user's prompt, generate a podcast episode that:
+        Based on the user's prompt (and any existing study guide context for this workspace), generate a podcast episode that:
         - Addresses the user's request or topic
         - Is educational, informative, and engaging
         - Has natural, conversational language
@@ -315,8 +333,10 @@ export const podcast = router({
 
         Title: ${input.podcastData.title}
         Description: ${input.podcastData.description || 'No description provided'}
-        Users notes: 
-        User Prompt: ${input.podcastData.userPrompt}`;
+        Users notes: ${studyGuideContent}
+        User Prompt: ${input.podcastData.userPrompt}
+        
+        If there is a study guide artifact in this workspace, incorporate its key points and structure to improve coherence. Use it only as supportive context, do not copy verbatim.`;
 
         const structureResponse = await inference(structurePrompt, 'podcast_structure');
         const structureData = await structureResponse.json();
