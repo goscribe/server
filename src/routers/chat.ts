@@ -3,7 +3,7 @@ import { authedProcedure, router } from "../trpc";
 import z from "zod";
 import PusherService from "../lib/pusher";
 
-const chat = router({
+export const chat = router({
     getChannel: authedProcedure
         .input(z.object({ workspaceId: z.string().optional(), channelId: z.string().optional() }))
         .query(async ({ input, ctx }) => {
