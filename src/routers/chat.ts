@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
-import { authedProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc.js";
 import z from "zod";
-import PusherService from "../lib/pusher";
+import PusherService from "../lib/pusher.js";
 
 export const chat = router({
     getChannel: authedProcedure
