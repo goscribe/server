@@ -273,7 +273,7 @@ export const podcast = router({
         where: { id: input.workspaceId, ownerId: ctx.session.user.id },
       });
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
-
+      
       try {
         // Emit podcast generation start notification
         await PusherService.emitTaskComplete(input.workspaceId, 'podcast_generation_start', { 
@@ -315,6 +315,7 @@ export const podcast = router({
 
         Title: ${input.podcastData.title}
         Description: ${input.podcastData.description || 'No description provided'}
+        Users notes: 
         User Prompt: ${input.podcastData.userPrompt}`;
 
         const structureResponse = await inference(structurePrompt, 'podcast_structure');

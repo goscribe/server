@@ -230,7 +230,7 @@ export class AISessionService {
         throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
       }
 
-      return (await contentResponse.json())['last_response'];
+      return (await contentResponse.json())['markdown'];
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',

@@ -87,6 +87,18 @@ export class PusherService {
       timestamp: new Date().toISOString(),
     });
   }
+
+  // Emit channel-specific events (for chat messages)
+  static async emitChannelEvent(channelId: string, event: string, data: any) {
+    try {
+      const channel = channelId; // Use channelId directly as channel name
+      const eventName = `${channelId}_${event}`;
+      await pusher.trigger(channel, eventName, data);
+      console.log(`📡 Pusher notification sent: ${eventName} to ${channel}`);
+    } catch (error) {
+      console.error('❌ Pusher notification error:', error);
+    }
+  }
 }
 
 export default PusherService;

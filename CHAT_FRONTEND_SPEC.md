@@ -6,7 +6,9 @@ This document outlines the frontend requirements for integrating with the chat f
 ## Real-Time Events (Pusher)
 
 ### Event Channels
-Chat events are broadcast on the channel: `{channelId}` for channel-specific events
+Chat events are broadcast on different channels:
+- Channel events: `workspace_{workspaceId}` 
+- Message events: `{channelId}` (the channelId itself is used as the channel name)
 
 ### Event Types
 
@@ -14,7 +16,7 @@ Chat events are broadcast on the channel: `{channelId}` for channel-specific eve
 ```typescript
 // New Channel Created
 {
-  event: '{channelId}_new_channel',
+  event: '{workspaceId}_new_channel',
   data: {
     channelId: string,
     workspaceId: string,
@@ -25,7 +27,7 @@ Chat events are broadcast on the channel: `{channelId}` for channel-specific eve
 
 // Channel Edited
 {
-  event: '{channelId}_edit_channel',
+  event: '{workspaceId}_edit_channel',
   data: {
     channelId: string,
     workspaceId: string,
@@ -35,7 +37,7 @@ Chat events are broadcast on the channel: `{channelId}` for channel-specific eve
 
 // Channel Removed
 {
-  event: '{channelId}_remove_channel',
+  event: '{workspaceId}_remove_channel',
   data: {
     channelId: string,
     deletedAt: string
@@ -81,6 +83,144 @@ Chat events are broadcast on the channel: `{channelId}` for channel-specific eve
 }
 ```
 
+## Data Types
+
+### Channel
+```typescript
+interface Channel {
+  id: string;
+  workspaceId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  chats?: ChatMessage[]; // Includes user information for each message
+}
+```
+
+### Chat Message
+```typescript
+interface ChatMessage {
+  id: string;
+  channelId: string;
+  userId: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: string;
+    name: string;
+    image?: string;
+  };
+}
+```
+
+### User Information
+All messages include user information with:
+- `id`: User ID
+- `name`: User display name
+- `image`: User avatar (optional)
+
+## API Endpoints
+
+### 1. Get Channels
+```typescript
+// GET /trpc/chat.getChannels
+{
+  input: {
+    workspaceId: string;
+  }
+}
+// Returns all channels for a workspace with messages and user info
+// Creates "General" channel if no channels exist
+```
+
+### 2. Get Channel
+```typescript
+// GET /trpc/chat.getChannel
+{
+  input: {
+    workspaceId?: string;
+    channelId?: string;
+  }
+}
+// Returns specific channel with messages and user info
+// Creates "General" channel if workspaceId provided and no channelId
+```
+
+### 3. Create Channel
+```typescript
+// POST /trpc/chat.createChannel
+{
+  input: {
+    workspaceId: string;
+    name: string;
+  }
+}
+// Creates new channel and returns with messages and user info
+```
+
+### 4. Edit Channel
+```typescript
+// POST /trpc/chat.editChannel
+{
+  input: {
+    workspaceId: string;
+    channelId: string;
+    name: string;
+  }
+}
+// Updates channel name and returns with messages and user info
+```
+
+### 5. Remove Channel
+```typescript
+// POST /trpc/chat.removeChannel
+{
+  input: {
+    workspaceId: string;
+    channelId: string;
+  }
+}
+// Deletes channel and returns { success: true }
+```
+
+### 6. Post Message
+```typescript
+// POST /trpc/chat.postMessage
+{
+  input: {
+    channelId: string;
+    message: string;
+  }
+}
+// Creates new message and returns with user info
+```
+
+### 7. Edit Message
+```typescript
+// POST /trpc/chat.editMessage
+{
+  input: {
+    chatId: string;
+    message: string;
+  }
+}
+// Updates message and returns with user info
+// Only allows editing own messages
+```
+
+### 8. Delete Message
+```typescript
+// POST /trpc/chat.deleteMessage
+{
+  input: {
+    chatId: string;
+  }
+}
+// Deletes message and returns { success: true }
+// Only allows deleting own messages
+```
+
 ## UI Components
 
 ### 1. Channel List Component
@@ -115,123 +255,6 @@ interface MessageComponent {
   isOwnMessage: boolean;
   onEdit: (chatId: string, newMessage: string) => void;
   onDelete: (chatId: string) => void;
-  onReply?: (chatId: string) => void;
-}
-```
-
-### 4. Channel Creation Modal
-```typescript
-interface ChannelCreationModal {
-  workspaceId: string;
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: (channel: Channel) => void;
-}
-```
-
-## Data Types
-
-### Channel
-```typescript
-interface Channel {
-  id: string;
-  workspaceId: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  chats?: ChatMessage[];
-}
-```
-
-### Chat Message
-```typescript
-interface ChatMessage {
-  id: string;
-  channelId: string;
-  userId: string;
-  message: string;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-## API Endpoints
-
-### 1. Get Channel
-```typescript
-// GET /trpc/chat.getChannel
-{
-  input: {
-    workspaceId?: string;
-    channelId?: string;
-  }
-}
-// Returns channel with messages or creates default "General" channel
-```
-
-### 2. Create Channel
-```typescript
-// POST /trpc/chat.createChannel
-{
-  input: {
-    workspaceId: string;
-    name: string;
-  }
-}
-```
-
-### 3. Edit Channel
-```typescript
-// POST /trpc/chat.editChannel
-{
-  input: {
-    workspaceId: string;
-    channelId: string;
-    name: string;
-  }
-}
-```
-
-### 4. Remove Channel
-```typescript
-// POST /trpc/chat.removeChannel
-{
-  input: {
-    workspaceId: string;
-    channelId: string;
-  }
-}
-```
-
-### 5. Post Message
-```typescript
-// POST /trpc/chat.postMessage
-{
-  input: {
-    channelId: string;
-    message: string;
-  }
-}
-```
-
-### 6. Edit Message
-```typescript
-// POST /trpc/chat.editMessage
-{
-  input: {
-    chatId: string;
-    message: string;
-  }
-}
-```
-
-### 7. Delete Message
-```typescript
-// POST /trpc/chat.deleteMessage
-{
-  input: {
-    chatId: string;
-  }
 }
 ```
 
@@ -239,70 +262,87 @@ interface ChatMessage {
 
 ### 1. Channel Management
 1. User opens workspace
-2. System automatically creates "General" channel if no channels exist
-3. User can create new channels
-4. User can edit channel names
-5. User can delete channels (with confirmation)
-6. Real-time updates when channels are created/edited/deleted
+2. Load all channels using `getChannels` endpoint
+3. System automatically creates "General" channel if no channels exist
+4. User can create new channels
+5. User can edit channel names
+6. User can delete channels (with confirmation)
+7. Real-time updates when channels are created/edited/deleted
 
 ### 2. Messaging Flow
 1. User selects a channel
-2. Load existing messages for the channel
+2. Load existing messages for the channel (includes user info)
 3. User types and sends message
 4. Message appears immediately (optimistic update)
 5. Real-time notification to other users
 6. Handle message editing and deletion
-7. Show typing indicators (future enhancement)
+7. Show user names and avatars for all messages
 
 ### 3. Message Management
-1. User can edit their own messages
-2. User can delete their own messages
+1. User can edit their own messages only
+2. User can delete their own messages only
 3. Real-time updates for message changes
 4. Proper error handling for unauthorized actions
 
 ## Real-Time Implementation
 
-### 1. Channel Events
-```typescript
-// Subscribe to channel events
-const channel = pusher.subscribe(`channel_${channelId}`);
+### PusherService Methods
+The chat system uses two different PusherService methods:
+- `emitTaskComplete(workspaceId, event, data)` - For channel management events
+- `emitChannelEvent(channelId, event, data)` - For message events (channel-specific)
 
-channel.bind('new_channel', (data) => {
+### 1. Initial Channel Loading
+```typescript
+// Load all channels for a workspace
+const channels = await trpc.chat.getChannels.query({ 
+  workspaceId: workspaceId 
+});
+
+// This will automatically create a "General" channel if none exist
+// All channels include messages with user information
+```
+
+### 2. Channel Events (Workspace Channel)
+```typescript
+// Subscribe to workspace channel events
+const workspaceChannel = pusher.subscribe(`workspace_${workspaceId}`);
+
+workspaceChannel.bind(`${workspaceId}_new_channel`, (data) => {
   // Add new channel to list
   setChannels(prev => [...prev, data]);
 });
 
-channel.bind('edit_channel', (data) => {
+workspaceChannel.bind(`${workspaceId}_edit_channel`, (data) => {
   // Update channel name in list
   setChannels(prev => prev.map(ch => 
     ch.id === data.channelId ? { ...ch, name: data.name } : ch
   ));
 });
 
-channel.bind('remove_channel', (data) => {
+workspaceChannel.bind(`${workspaceId}_remove_channel`, (data) => {
   // Remove channel from list
   setChannels(prev => prev.filter(ch => ch.id !== data.channelId));
 });
 ```
 
-### 2. Message Events
+### 3. Message Events (Channel-Specific)
 ```typescript
-// Subscribe to message events
-const channel = pusher.subscribe(`channel_${channelId}`);
+// Subscribe to message events for specific channel
+const messageChannel = pusher.subscribe(channelId);
 
-channel.bind('new_message', (data) => {
+messageChannel.bind(`${channelId}_new_message`, (data) => {
   // Add new message to chat
   setMessages(prev => [...prev, data]);
 });
 
-channel.bind('edit_message', (data) => {
+messageChannel.bind(`${channelId}_edit_message`, (data) => {
   // Update message in chat
   setMessages(prev => prev.map(msg => 
     msg.id === data.chatId ? { ...msg, message: data.message, updatedAt: data.updatedAt } : msg
   ));
 });
 
-channel.bind('delete_message', (data) => {
+messageChannel.bind(`${channelId}_delete_message`, (data) => {
   // Remove message from chat
   setMessages(prev => prev.filter(msg => msg.id !== data.chatId));
 });
@@ -317,7 +357,7 @@ channel.bind('delete_message', (data) => {
 
 ### 2. Message Errors
 - Message not found
-- Unauthorized to edit/delete message
+- Unauthorized to edit/delete message (only own messages)
 - Message too long
 - Rate limiting
 
@@ -347,72 +387,53 @@ interface MessageLoadingState {
 }
 ```
 
-## Accessibility Requirements
+## Security & Authorization
 
-### 1. Keyboard Navigation
-- Tab through channels and messages
-- Enter to send messages
-- Escape to close modals
-- Arrow keys for message navigation
+### 1. Message Ownership
+- Users can only edit their own messages
+- Users can only delete their own messages
+- Proper validation on server side
 
-### 2. Screen Reader Support
-- Announce new messages
-- Announce channel changes
-- Proper ARIA labels for interactive elements
+### 2. Channel Access
+- Users can only access channels in their workspaces
+- Proper workspace membership validation
 
-### 3. Focus Management
-- Focus moves to new messages
-- Focus returns to input after sending
-- Focus management for modals
+### 3. Input Validation
+- Message content validation
+- Channel name validation
+- Rate limiting for message sending
 
 ## Performance Considerations
 
 ### 1. Message Loading
-- Pagination for large message histories
-- Virtual scrolling for long message lists
-- Lazy loading of message content
+- All messages include user info (no additional queries needed)
+- Efficient database queries with includes
+- Proper indexing on channelId and userId
 
 ### 2. Real-time Updates
-- Debounce frequent updates
-- Batch UI updates
-- Optimize re-renders
+- Separate channels for workspace and message events
+- Efficient event routing
+- Optimized payload sizes
 
 ### 3. Memory Management
-- Clean up Pusher subscriptions
+- Clean up Pusher subscriptions when switching channels
 - Limit message history in memory
 - Garbage collection for old messages
-
-## Security Considerations
-
-### 1. Message Validation
-- Sanitize user input
-- Prevent XSS attacks
-- Rate limiting for message sending
-
-### 2. Authorization
-- Verify user permissions for channel operations
-- Validate message ownership for edits/deletes
-- Check workspace membership
-
-### 3. Data Privacy
-- Encrypt sensitive messages (future enhancement)
-- Secure real-time connections
-- Proper session management
 
 ## Testing Requirements
 
 ### 1. Unit Tests
-- Component rendering
-- Message formatting
+- Component rendering with user info
+- Message formatting and display
 - Channel management logic
 
 ### 2. Integration Tests
-- API interactions
+- API interactions with user data
 - Real-time event handling
-- Error scenarios
+- Authorization scenarios
 
 ### 3. E2E Tests
-- Complete messaging flow
+- Complete messaging flow with user attribution
 - Channel management
 - Real-time synchronization
 
@@ -446,7 +467,8 @@ interface MessageLoadingState {
 - Dark mode support
 
 ### 3. Performance Optimizations
-- Message caching
+- Message pagination
+- Virtual scrolling
 - Offline support
 - Background sync
 - Push notifications
