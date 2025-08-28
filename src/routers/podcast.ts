@@ -44,7 +44,6 @@ const podcastMetadataSchema = z.object({
   voice: z.string(),
   speed: z.number(),
   segments: z.array(podcastSegmentSchema),
-  fullEpisodeObjectKey: z.string().optional(), // Reference to the full joined episode audio
   summary: z.object({
     executiveSummary: z.string(),
     learningObjectives: z.array(z.string()),
@@ -110,7 +109,7 @@ export const podcast = router({
       });
     }),
 
-  // Get a specific podcast episode with segments
+  // Get a specific podcast episode with segments and signed URLs
   getEpisode: authedProcedure
     .input(z.object({ episodeId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -134,21 +133,58 @@ export const podcast = router({
       
       const metadata = podcastMetadataSchema.parse(latestVersion.data);
       
+      // Generate fresh signed URLs for all segments
+      const segmentsWithUrls = await Promise.all(
+        metadata.segments.map(async (segment) => {
+          if (segment.objectKey) {
+            try {
+              const signedUrl = await generateSignedUrl(segment.objectKey, 24); // 24 hours
+              return {
+                id: segment.id,
+                title: segment.title,
+                content: segment.content,
+                audioUrl: signedUrl,
+                objectKey: segment.objectKey,
+                startTime: segment.startTime,
+                duration: segment.duration,
+                keyPoints: segment.keyPoints,
+                order: segment.order,
+              };
+            } catch (error) {
+              console.error(`Failed to generate signed URL for segment ${segment.id}:`, error);
+              return {
+                id: segment.id,
+                title: segment.title,
+                content: segment.content,
+                audioUrl: null,
+                objectKey: segment.objectKey,
+                startTime: segment.startTime,
+                duration: segment.duration,
+                keyPoints: segment.keyPoints,
+                order: segment.order,
+              };
+            }
+          }
+          return {
+            id: segment.id,
+            title: segment.title,
+            content: segment.content,
+            audioUrl: null,
+            objectKey: segment.objectKey,
+            startTime: segment.startTime,
+            duration: segment.duration,
+            keyPoints: segment.keyPoints,
+            order: segment.order,
+          };
+        })
+      );
+      
       return {
         id: episode.id,
         title: metadata.title, // Use title from version metadata
         description: metadata.description, // Use description from version metadata
         metadata,
-        segments: metadata.segments.map(segment => ({
-          id: segment.id,
-          title: segment.title,
-          content: segment.content,
-          objectKey: segment.objectKey, // Include objectKey for URL refresh
-          startTime: segment.startTime,
-          duration: segment.duration,
-          keyPoints: segment.keyPoints,
-          order: segment.order,
-        })),
+        segments: segmentsWithUrls,
         content: latestVersion.content, // transcript
         createdAt: episode.createdAt,
         updatedAt: episode.updatedAt,
@@ -239,7 +275,6 @@ export const podcast = router({
         const segments = [];
         let totalDuration = 0;
         let fullTranscript = '';
-        const segmentAudioBuffers = []; // Store audio buffers for joining
 
         // Emit audio generation start notification
         await PusherService.emitTaskComplete(input.workspaceId, 'podcast_audio_generation_start', { 
@@ -296,13 +331,6 @@ export const podcast = router({
             const fileName = `segment_${index + 1}.mp3`;
             const uploadResult = await uploadToGCS(audioBuffer, fileName, 'audio/mpeg', false); // Keep private
 
-            // Store audio buffer for joining later
-            segmentAudioBuffers.push({
-              buffer: audioBuffer,
-              segmentId: uuidv4(),
-              order: segment.order || index + 1,
-            });
-
             // Estimate duration (roughly 150 words per minute for TTS)
             const wordCount = segment.content.split(' ').length;
             const estimatedDuration = Math.ceil((wordCount / 150) * 60); // in seconds
@@ -336,38 +364,10 @@ export const podcast = router({
           totalDuration: totalDuration
         });
 
-        // Step 2.5: Join all segments into a single audio file
-        await PusherService.emitTaskComplete(input.workspaceId, 'podcast_audio_joining_start', { 
-          totalSegments: segmentAudioBuffers.length
+        // Step 2.5: Prepare segment audio array for frontend joining
+        await PusherService.emitTaskComplete(input.workspaceId, 'podcast_audio_preparation_complete', { 
+          totalSegments: segments.length
         });
-
-        let fullAudioBuffer;
-        let fullEpisodeUploadResult = null;
-        try {
-          // Sort segments by order
-          const sortedBuffers = segmentAudioBuffers.sort((a, b) => a.order - b.order);
-          
-          // For now, we'll concatenate the MP3 buffers directly
-          // In a production environment, you might want to use a proper audio processing library
-          // like ffmpeg or sox for better audio joining with proper transitions
-          fullAudioBuffer = Buffer.concat(sortedBuffers.map(sb => sb.buffer));
-          
-          // Upload the full episode audio
-          const fullEpisodeFileName = `episode_${Date.now()}.mp3`;
-          fullEpisodeUploadResult = await uploadToGCS(fullAudioBuffer, fullEpisodeFileName, 'audio/mpeg', false);
-          
-          // Emit audio joining completion notification
-          await PusherService.emitTaskComplete(input.workspaceId, 'podcast_audio_joining_complete', { 
-            fullEpisodeObjectKey: fullEpisodeUploadResult.objectKey
-          });
-          
-        } catch (joinError) {
-          console.error('Error joining audio segments:', joinError);
-          await PusherService.emitTaskComplete(input.workspaceId, 'podcast_audio_joining_error', { 
-            error: joinError instanceof Error ? joinError.message : 'Unknown error'
-          });
-          // Continue without the full episode audio - individual segments will still work
-        }
 
         // Step 3: Generate episode summary using inference API
         const summaryPrompt = `Create a comprehensive podcast episode summary including:
@@ -445,8 +445,7 @@ export const podcast = router({
           totalDuration: totalDuration,
           voice: input.podcastData.voice,
           speed: input.podcastData.speed,
-          segments: segments,
-          fullEpisodeObjectKey: fullAudioBuffer ? fullEpisodeUploadResult?.objectKey : null, // Store reference to full episode
+          segments: segments, // Array of segments with audio URLs for frontend joining
           summary: episodeSummary,
           generatedAt: new Date().toISOString(),
         };
@@ -600,90 +599,11 @@ export const podcast = router({
           .map(s => `\n\n## ${s.title}\n\n${s.content}`)
           .join('');
 
-        // Step: Regenerate the full episode audio with updated segments
-        await PusherService.emitTaskComplete(episode.workspaceId, 'podcast_full_episode_regeneration_start', { 
-          reason: 'segment_updated'
+        // Step: Update segment audio (no need to regenerate full episode)
+        await PusherService.emitTaskComplete(episode.workspaceId, 'podcast_segment_audio_updated', { 
+          segmentId: input.segmentId,
+          totalSegments: metadata.segments.length
         });
-
-        try {
-          // Get fresh audio for all segments to ensure we have the latest versions
-          const segmentAudioBuffers = [];
-          
-          for (const seg of metadata.segments) {
-            try {
-              // Generate fresh audio for this segment
-              const segmentMp3Response = await fetch('https://api.murf.ai/v1/speech/generate', {
-                method: 'POST',
-                headers: {
-                  'api-key': process.env.MURF_TTS_KEY || '',
-                  'Content-Type': 'application/json',
-                  'Accept': 'application/json',
-                },
-                body: JSON.stringify({
-                  text: seg.content,
-                  voiceId: 'en-US-natalie',
-                }),
-              });
-
-              if (!segmentMp3Response.ok) {
-                throw new Error(`Murf TTS error: ${segmentMp3Response.status} ${segmentMp3Response.statusText}`);
-              }
-
-              const segmentMp3Data = await segmentMp3Response.json();
-              const segmentAudioUrl = segmentMp3Data.audioFile || segmentMp3Data.audioUrl || segmentMp3Data.url || segmentMp3Data.downloadUrl;
-              
-              if (!segmentAudioUrl) {
-                throw new Error('No audio URL in Murf response');
-              }
-
-              const segmentAudioResponse = await fetch(segmentAudioUrl);
-              if (!segmentAudioResponse.ok) {
-                throw new Error(`Failed to download audio: ${segmentAudioResponse.status} ${segmentAudioResponse.statusText}`);
-              }
-
-              const segmentAudioBuffer = Buffer.from(await segmentAudioResponse.arrayBuffer());
-              
-              // Update the segment's object key with new audio
-              const segmentFileName = `segment_${seg.order}_${Date.now()}.mp3`;
-              const segmentUploadResult = await uploadToGCS(segmentAudioBuffer, segmentFileName, 'audio/mpeg', false);
-              seg.objectKey = segmentUploadResult.objectKey;
-              
-              segmentAudioBuffers.push({
-                buffer: segmentAudioBuffer,
-                segmentId: seg.id,
-                order: seg.order,
-              });
-              
-            } catch (segmentError) {
-              console.error(`Error regenerating audio for segment ${seg.id}:`, segmentError);
-              // Continue with other segments
-            }
-          }
-
-          // Join all segments into full episode audio
-          if (segmentAudioBuffers.length > 0) {
-            const sortedBuffers = segmentAudioBuffers.sort((a, b) => a.order - b.order);
-            const fullAudioBuffer = Buffer.concat(sortedBuffers.map(sb => sb.buffer));
-            
-            // Upload the full episode audio
-            const fullEpisodeFileName = `episode_${Date.now()}.mp3`;
-            const fullEpisodeUploadResult = await uploadToGCS(fullAudioBuffer, fullEpisodeFileName, 'audio/mpeg', false);
-            
-            // Update metadata with new full episode object key
-            metadata.fullEpisodeObjectKey = fullEpisodeUploadResult.objectKey;
-            
-            await PusherService.emitTaskComplete(episode.workspaceId, 'podcast_full_episode_regeneration_complete', { 
-              fullEpisodeObjectKey: fullEpisodeUploadResult.objectKey
-            });
-          }
-          
-        } catch (fullEpisodeError) {
-          console.error('Error regenerating full episode audio:', fullEpisodeError);
-          await PusherService.emitTaskComplete(episode.workspaceId, 'podcast_full_episode_regeneration_error', { 
-            error: fullEpisodeError instanceof Error ? fullEpisodeError.message : 'Unknown error'
-          });
-          // Continue without full episode audio - individual segments will still work
-        }
 
         // Create new version
         const nextVersion = (latestVersion.version || 0) + 1;
@@ -908,124 +828,9 @@ export const podcast = router({
       ];
     }),
 
-  // Get fresh signed URLs for an episode (doesn't create new version)
-  getSignedUrls: authedProcedure
-    .input(z.object({ episodeId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const episode = await ctx.db.artifact.findFirst({
-        where: { 
-          id: input.episodeId,
-          type: ArtifactType.PODCAST_EPISODE,
-          workspace: { ownerId: ctx.session.user.id }
-        },
-        include: {
-          versions: {
-            orderBy: { version: 'desc' },
-            take: 1,
-          },
-        },
-      });
-      
-      if (!episode) throw new TRPCError({ code: 'NOT_FOUND' });
-      
-      const latestVersion = episode.versions[0];
-      if (!latestVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'No version found' });
 
-      const metadata = podcastMetadataSchema.parse(latestVersion.data);
-      
-      // Generate fresh signed URLs for all segments
-      const segmentsWithUrls = await Promise.all(
-        metadata.segments.map(async (segment) => {
-          if (segment.objectKey) {
-            try {
-              const signedUrl = await generateSignedUrl(segment.objectKey, 24); // 24 hours
-              return {
-                id: segment.id,
-                title: segment.title,
-                audioUrl: signedUrl,
-                startTime: segment.startTime,
-                duration: segment.duration,
-                order: segment.order,
-              };
-            } catch (error) {
-              console.error(`Failed to generate signed URL for segment ${segment.id}:`, error);
-              return {
-                id: segment.id,
-                title: segment.title,
-                audioUrl: null,
-                startTime: segment.startTime,
-                duration: segment.duration,
-                order: segment.order,
-              };
-            }
-          }
-          return {
-            id: segment.id,
-            title: segment.title,
-            audioUrl: null,
-            startTime: segment.startTime,
-            duration: segment.duration,
-            order: segment.order,
-          };
-        })
-      );
 
-      // Generate signed URL for full episode if available
-      let fullEpisodeUrl = null;
-      if (metadata.fullEpisodeObjectKey) {
-        try {
-          fullEpisodeUrl = await generateSignedUrl(metadata.fullEpisodeObjectKey, 24); // 24 hours
-        } catch (error) {
-          console.error(`Failed to generate signed URL for full episode:`, error);
-        }
-      }
 
-      return {
-        segments: segmentsWithUrls,
-        fullEpisodeUrl,
-      };
-    }),
-
-  // Get full episode audio URL
-  getFullEpisodeUrl: authedProcedure
-    .input(z.object({ episodeId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const episode = await ctx.db.artifact.findFirst({
-        where: { 
-          id: input.episodeId,
-          type: ArtifactType.PODCAST_EPISODE,
-          workspace: { ownerId: ctx.session.user.id }
-        },
-        include: {
-          versions: {
-            orderBy: { version: 'desc' },
-            take: 1,
-          },
-        },
-      });
-      
-      if (!episode) throw new TRPCError({ code: 'NOT_FOUND' });
-      
-      const latestVersion = episode.versions[0];
-      if (!latestVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'No version found' });
-
-      const metadata = podcastMetadataSchema.parse(latestVersion.data);
-      
-      if (!metadata.fullEpisodeObjectKey) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Full episode audio not available' });
-      }
-
-      try {
-        const signedUrl = await generateSignedUrl(metadata.fullEpisodeObjectKey, 24); // 24 hours
-        return {
-          fullEpisodeUrl: signedUrl,
-          totalDuration: metadata.totalDuration,
-        };
-      } catch (error) {
-        console.error(`Failed to generate signed URL for full episode:`, error);
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to generate episode URL' });
-      }
-    }),
 
 
 });
