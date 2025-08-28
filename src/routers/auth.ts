@@ -67,6 +67,7 @@ export const auth = router({
       // Create custom auth token
       const authToken = createCustomAuthToken(user.id);
 
+
       // Set the cookie immediately after successful login
       const cookieValue = serialize("auth_token", authToken, {
         httpOnly: true,
@@ -77,6 +78,7 @@ export const auth = router({
       });
       
       ctx.res.setHeader("Set-Cookie", cookieValue);
+
 
       return { 
         id: user.id, 
