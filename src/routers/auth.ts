@@ -70,8 +70,8 @@ export const auth = router({
       // Set the cookie immediately after successful login
       const cookieValue = serialize("auth_token", authToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        secure: false, // Allow HTTP for development
+        sameSite: "none", // Required for cross-origin
         path: "/",
         maxAge: 60 * 60 * 24 * 30, // 30 days
       });
@@ -82,7 +82,8 @@ export const auth = router({
         id: user.id, 
         email: user.email, 
         name: user.name, 
-        image: user.image 
+        image: user.image,
+        token: authToken
       };
     }),
   getSession: publicProcedure.query(async ({ ctx }) => {
