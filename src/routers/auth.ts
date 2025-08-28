@@ -67,12 +67,12 @@ export const auth = router({
       // Create custom auth token
       const authToken = createCustomAuthToken(user.id);
 
+      const isProduction = (process.env.NODE_ENV === "production" || process.env.RENDER) as boolean;
 
-      // Set the cookie immediately after successful login
       const cookieValue = serialize("auth_token", authToken, {
         httpOnly: true,
-        secure: false, // Allow HTTP for development
-        sameSite: "none", // Required for cross-origin
+        secure: isProduction, // true for production/HTTPS, false for localhost
+        sameSite: isProduction ? "none" : "lax", // none for cross-origin, lax for same-origin
         path: "/",
         maxAge: 60 * 60 * 24 * 30, // 30 days
       });
