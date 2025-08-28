@@ -11,16 +11,46 @@ export const chat = router({
                 const defaultChannel = await ctx.db.channel.create({
                     data: { workspaceId: input.workspaceId, name: "General" },
                 });
+
+                await PusherService.emitTaskComplete(input.workspaceId, "new_channel", {
+                    channelId: defaultChannel.id,
+                    workspaceId: input.workspaceId,
+                    name: "General",
+                    createdAt: defaultChannel.createdAt,
+                });
+
                 return defaultChannel;
             }
             const channel = await ctx.db.channel.findUnique({
                 where: { id: input.channelId },
                 include: { chats: true },
             });
+
             if (!channel) {
                 throw new TRPCError({ code: "NOT_FOUND", message: "Channel not found" });
             }
 
+            return channel;
+        }),
+    removeChannel: authedProcedure
+        .input(z.object({ workspaceId: z.string(), channelId: z.string() }))
+        .mutation(async ({ input, ctx }) => {
+            await ctx.db.channel.delete({ where: { id: input.channelId } });
+            await PusherService.emitTaskComplete(input.workspaceId, "remove_channel", {
+                channelId: input.channelId,
+                deletedAt: new Date().toISOString(),
+            });
+            return { success: true };
+        }),
+    editChannel: authedProcedure
+        .input(z.object({ workspaceId: z.string(), channelId: z.string(), name: z.string() }))
+        .mutation(async ({ input, ctx }) => {
+            const channel = await ctx.db.channel.update({ where: { id: input.channelId }, data: { name: input.name } });
+            await PusherService.emitTaskComplete(input.workspaceId, "edit_channel", {
+                channelId: input.channelId,
+                workspaceId: input.workspaceId,
+                name: input.name,
+            });
             return channel;
         }),
     createChannel: authedProcedure
