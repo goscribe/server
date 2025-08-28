@@ -50,11 +50,13 @@ model User {
   // Ownership
   folders       Folder[]          @relation("UserFolders")
   workspaces    Workspace[]       @relation("UserWorkspaces")
+  invitedInWorkspaces Workspace[]       @relation("WorkspaceSharedWith") // many-to-many
   uploads       FileAsset[]       @relation("UserUploads")
   artifacts     Artifact[]        @relation("UserArtifacts")
   versions      ArtifactVersion[] @relation("UserArtifactVersions")
   worksheetQuestionProgress WorksheetQuestionProgress[]
 
+  chats         Chat[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 }
@@ -109,6 +111,12 @@ model Workspace {
   // A workspace (file) lives in a folder (nullable = root)
   folderId    String?
   folder      Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  
+  channels  Channel[]
+
+  shareLink   String?  @unique // optional public share link
+
+  sharedWith  User[]   @relation("WorkspaceSharedWith") // many-to-many for sharing
 
   // Raw uploads attached to this workspace
   uploads     FileAsset[]
@@ -120,6 +128,34 @@ model Workspace {
   updatedAt   DateTime @updatedAt
 
   @@index([ownerId, folderId])
+}
+
+model Channel {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+
+  createdAt   DateTime  @default(now())
+  chats      Chat[]
+
+  @@index([workspaceId])
+}
+
+model Chat {
+  id          String    @id @default(cuid())
+  channelId   String
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId      String?
+  message     String    // chat message content
+
+  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime  @default(now())
+
+  @@index([channelId, createdAt])
 }
 
 //

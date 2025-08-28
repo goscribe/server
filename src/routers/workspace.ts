@@ -130,6 +130,58 @@ export const workspace = router({
       if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
       return ws;
     }),
+  share: authedProcedure
+    .input(z.object({
+        id: z.string(),
+     }))
+    .query(async ({ ctx, input }) => {
+      const ws = await ctx.db.workspace.findFirst({
+        where: { id: input.id, ownerId: ctx.session.user.id },
+      });
+      if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
+    
+      // generate a unique share link if not exists
+      if (!ws.shareLink) {
+        const shareLink = [...Array(30)].map(() => (Math.random() * 36 | 0).toString(36)).join('');
+        const updated = await ctx.db.workspace.update({
+          where: { id: ws.id },
+          data: { shareLink },
+        });
+        return { shareLink: updated.shareLink };
+      }
+    }),
+  join: authedProcedure
+    .input(z.object({
+        shareLink: z.string().min(10).max(100),
+     }))
+    .mutation(async ({ ctx, input }) => {
+      const ws = await ctx.db.workspace.findFirst({
+        where: { shareLink: input.shareLink },
+      });
+      if (!ws) throw new TRPCError({ code: 'NOT_FOUND', message: 'Workspace not found' }); 
+      if (ws.ownerId === ctx.session.user.id) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot join your own workspace' });
+      }
+      // add to sharedWith if not already
+      const alreadyShared = await ctx.db.workspace.findFirst({
+        where: { id: ws.id, sharedWith: { some: { id: ctx.session.user.id } } },
+      });
+      if (alreadyShared) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Already joined this workspace' });
+      }
+      await ctx.db.workspace.update({
+        where: { id: ws.id }, 
+        data: { sharedWith: { connect: { id: ctx.session.user.id } } },
+      });
+      return {
+        id: ws.id,
+        title: ws.title,
+        description: ws.description,
+        ownerId: ws.ownerId,
+        createdAt: ws.createdAt,
+        updatedAt: ws.updatedAt,
+      };
+    }),
   update: authedProcedure
     .input(z.object({
         id: z.string(),
