@@ -579,11 +579,13 @@ export const workspace = router({
           const workspaces = await ctx.db.workspace.findMany({
             where: {
               ownerId: ctx.session.user.id,
-              title: {
-                contains: query,
-                mode: 'insensitive',
-              },
               OR: [
+                {
+                  title: {
+                    contains: query,
+                    mode: 'insensitive',
+                  },
+                },
                 {
                   description: {
                     contains: query,
