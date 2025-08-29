@@ -599,7 +599,7 @@ export const workspace = router({
                   answer: answer.trim(),
                   difficulty: 'MEDIUM' as any,
                   order: i,
-                  meta: { type: 'TEXT' },
+                  meta: { type: 'TEXT', },
                 },
               });
             }

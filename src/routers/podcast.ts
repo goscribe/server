@@ -199,12 +199,18 @@ export const podcast = router({
           },
         },
       });
+
+      console.log(episode)
+
       if (!episode) throw new TRPCError({ code: 'NOT_FOUND' });
       
       const latestVersion = episode.versions[0];
       if (!latestVersion) throw new TRPCError({ code: 'NOT_FOUND', message: 'No version found' });
       
+      console.log(latestVersion)
+
       const metadata = podcastMetadataSchema.parse(latestVersion.data);
+
       
       // Generate fresh signed URLs for all segments
       const segmentsWithUrls = await Promise.all(
@@ -333,7 +339,7 @@ export const podcast = router({
 
         Title: ${input.podcastData.title}
         Description: ${input.podcastData.description || 'No description provided'}
-        Users notes: ${studyGuideContent}
+        Users notes: 
         User Prompt: ${input.podcastData.userPrompt}
         
         If there is a study guide artifact in this workspace, incorporate its key points and structure to improve coherence. Use it only as supportive context, do not copy verbatim.`;
