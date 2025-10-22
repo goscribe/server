@@ -1,4 +1,5 @@
 import Pusher from 'pusher';
+import { logger } from './logger';
 
 // Server-side Pusher instance
 export const pusher = new Pusher({
@@ -17,7 +18,7 @@ export class PusherService {
       const channel = `workspace_${workspaceId}`;
       const eventName = `${workspaceId}_${event}`;
       await pusher.trigger(channel, eventName, data);
-      console.log(`📡 Pusher notification sent: ${eventName} to ${channel}`);
+      logger.info(`📡 Pusher notification sent: ${eventName} to ${channel}`);
     } catch (error) {
       console.error('❌ Pusher notification error:', error);
     }

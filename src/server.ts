@@ -8,6 +8,8 @@ import * as trpcExpress from '@trpc/server/adapters/express';
 
 import { appRouter } from './routers/_app.js';
 import { createContext } from './context.js';
+import { prisma } from './lib/prisma.js';
+import { logger } from './lib/logger.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
@@ -24,7 +26,15 @@ async function main() {
     exposedHeaders: ['Set-Cookie'],
   }));
 
-  app.use(morgan('dev'));
+  // Custom morgan middleware with logger integration
+  app.use(morgan('combined', {
+    stream: {
+      write: (message: string) => {
+        logger.info(message.trim(), 'HTTP');
+      }
+    }
+  }));
+  
   app.use(compression());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -45,12 +55,12 @@ async function main() {
   );
 
   app.listen(PORT, () => {
-    console.log(`✅ Server ready on http://localhost:${PORT}`);
-    console.log(`➡️  tRPC endpoint at http://localhost:${PORT}/trpc`);
+    logger.info(`Server ready on http://localhost:${PORT}`, 'SERVER');
+    logger.info(`tRPC endpoint at http://localhost:${PORT}/trpc`, 'SERVER');
   });
 }
 
 main().catch((err) => {
-  console.error('Failed to start server', err);
+  logger.error('Failed to start server', 'SERVER', undefined, err);
   process.exit(1);
 });

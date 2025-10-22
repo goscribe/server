@@ -304,6 +304,8 @@ export const podcast = router({
         const latestVersion = studyGuide?.versions[0];
         const studyGuideContent = latestVersion?.content || '';
 
+        console.log(studyGuideContent)
+
         // Step 1: Structure the content into segments using inference API
         const structurePrompt = `You are a podcast content structuring assistant. Given a user prompt, create a complete podcast episode with engaging content and logical segments.
         
@@ -344,9 +346,8 @@ export const podcast = router({
         
         If there is a study guide artifact in this workspace, incorporate its key points and structure to improve coherence. Use it only as supportive context, do not copy verbatim.`;
 
-        const structureResponse = await inference(structurePrompt, 'podcast_structure');
-        const structureData = await structureResponse.json();
-        const structureContent = structureData.response || '';
+        const structureResponse = await inference(structurePrompt);
+        const structureContent: string = structureResponse.choices[0].message.content || '';
 
         let structuredContent;
         try {
@@ -490,9 +491,8 @@ export const podcast = router({
         Podcast Title: ${structuredContent.episodeTitle}
         Segments: ${JSON.stringify(segments.map(s => ({ title: s.title, keyPoints: s.keyPoints })))}`;
 
-        const summaryResponse = await inference(summaryPrompt, 'podcast_summary');
-        const summaryData = await summaryResponse.json();
-        const summaryContent = summaryData.response || '';
+        const summaryResponse = await inference(summaryPrompt);
+        const summaryContent: string = summaryResponse.choices[0].message.content || '';
 
         let episodeSummary;
         try {

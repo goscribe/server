@@ -45,6 +45,14 @@ export const flashcards = router({
       if (!set) throw new TRPCError({ code: 'NOT_FOUND' });
       return set.flashcards;
     }),
+  isGenerating: authedProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const artifact = await ctx.db.artifact.findFirst({
+        where: { workspaceId: input.workspaceId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } }, orderBy: { updatedAt: 'desc' },
+      });
+      return artifact?.generating;
+    }),
   createCard: authedProcedure
     .input(z.object({
       workspaceId: z.string(),
@@ -145,6 +153,7 @@ export const flashcards = router({
           type: ArtifactType.FLASHCARD_SET,
         },
         select: {
+          id: true,
           flashcards: true,
         },
         orderBy: {
@@ -152,6 +161,12 @@ export const flashcards = router({
         },
       });
 
+      await ctx.db.artifact.update({
+        where: { id: flashcardCurrent?.id },
+        data: { generating: true, generatingMetadata: { quantity: input.numCards, difficulty: input.difficulty.toLowerCase() } },
+      });
+
+      await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_info', { status: 'generating', numCards: input.numCards, difficulty: input.difficulty });
 
       const formattedPreviousCards = flashcardCurrent?.flashcards.map((card) => ({
         front: card.front,
@@ -169,22 +184,6 @@ export const flashcards = router({
 
       The user has also left you this prompt: ${input.prompt}
       `
-      // Init AI session and seed with prompt as instruction
-      const session = await aiSessionService.initSession(input.workspaceId);
-      await aiSessionService.setInstruction(session.id, partialPrompt);
-
-      await aiSessionService.startLLMSession(session.id);
-      
-      const currentCards = flashcardCurrent?.flashcards.length || 0;
-      const newCards = input.numCards - currentCards;
-
-      // Generate
-      await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_info', { status: 'generating', numCards: input.numCards, difficulty: input.difficulty });
-      const content = await aiSessionService.generateFlashcardQuestions(session.id, input.numCards, input.difficulty);
-
-      // Previous cards
-
-      // Create artifact
       const artifact = await ctx.db.artifact.create({
         data: {
           workspaceId: input.workspaceId,
@@ -199,6 +198,23 @@ export const flashcards = router({
           },
         },
       });
+
+      // Init AI session and seed with prompt as instruction
+      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
+      await aiSessionService.setInstruction(session.id, partialPrompt);
+
+      await aiSessionService.startLLMSession(session.id);
+      
+      const currentCards = flashcardCurrent?.flashcards.length || 0;
+      const newCards = input.numCards - currentCards;
+
+
+
+
+      // Generate
+      const content = await aiSessionService.generateFlashcardQuestions(session.id, input.numCards, input.difficulty);
+
+      // Previous cards
 
       // Parse and create cards
       let createdCards = 0;

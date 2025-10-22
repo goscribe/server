@@ -5,6 +5,7 @@ import { bucket } from '../lib/storage.js';
 import { ArtifactType } from '@prisma/client';
 import { aiSessionService } from '../lib/ai-session.js';
 import PusherService from '../lib/pusher.js';
+import { members } from './members.js';
 
 // Helper function to calculate search relevance score
 function calculateRelevance(query: string, ...texts: (string | null | undefined)[]): number {
@@ -130,63 +131,13 @@ export const workspace = router({
       if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
       return ws;
     }),
-  share: authedProcedure
-    .input(z.object({
-        id: z.string(),
-     }))
-    .query(async ({ ctx, input }) => {
-      const ws = await ctx.db.workspace.findFirst({
-        where: { id: input.id, ownerId: ctx.session.user.id },
-      });
-      if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
-    
-      // generate a unique share link if not exists
-      if (!ws.shareLink) {
-        const shareLink = [...Array(30)].map(() => (Math.random() * 36 | 0).toString(36)).join('');
-        const updated = await ctx.db.workspace.update({
-          where: { id: ws.id },
-          data: { shareLink },
-        });
-        return { shareLink: updated.shareLink };
-      }
-    }),
-  join: authedProcedure
-    .input(z.object({
-        shareLink: z.string().min(10).max(100),
-     }))
-    .mutation(async ({ ctx, input }) => {
-      const ws = await ctx.db.workspace.findFirst({
-        where: { shareLink: input.shareLink },
-      });
-      if (!ws) throw new TRPCError({ code: 'NOT_FOUND', message: 'Workspace not found' }); 
-      if (ws.ownerId === ctx.session.user.id) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cannot join your own workspace' });
-      }
-      // add to sharedWith if not already
-      const alreadyShared = await ctx.db.workspace.findFirst({
-        where: { id: ws.id, sharedWith: { some: { id: ctx.session.user.id } } },
-      });
-      if (alreadyShared) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Already joined this workspace' });
-      }
-      await ctx.db.workspace.update({
-        where: { id: ws.id }, 
-        data: { sharedWith: { connect: { id: ctx.session.user.id } } },
-      });
-      return {
-        id: ws.id,
-        title: ws.title,
-        description: ws.description,
-        ownerId: ws.ownerId,
-        createdAt: ws.createdAt,
-        updatedAt: ws.updatedAt,
-      };
-    }),
   update: authedProcedure
     .input(z.object({
         id: z.string(),
         name: z.string().min(1).max(100).optional(),
         description: z.string().max(500).optional(),
+        color: z.string().optional(),
+        icon: z.string().optional(),
      }))
     .mutation(async ({ ctx, input }) => {
       const existed = await ctx.db.workspace.findFirst({
@@ -198,6 +149,8 @@ export const workspace = router({
         data: {
           title: input.name ?? existed.title,
           description: input.description,
+          color: input.color ?? existed.color,
+          icon: input.icon ?? existed.icon,
         },
       });
       return updated; 
@@ -376,7 +329,7 @@ export const workspace = router({
 
       // Initialize AI session
       console.log('🤖 Initializing AI session...');
-      const session = await aiSessionService.initSession(input.workspaceId);
+      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
       console.log('✅ AI session initialized', { sessionId: session.id });
       
       const fileObj = new File([fileBuffer], input.file.filename, { type: input.file.contentType });
@@ -530,7 +483,7 @@ export const workspace = router({
 
       if (input.generateWorksheet) {
         await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_load_start', { filename: input.file.filename });
-        const content = await aiSessionService.generateWorksheetQuestions(session.id, 8, 'medium');
+        const content = await aiSessionService.generateWorksheetQuestions(session.id, 8, 'MEDIUM');
         await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: content.length });
         
         const artifact = await ctx.db.artifact.create({
@@ -652,6 +605,8 @@ export const workspace = router({
             take: input.limit,
           });
           return workspaces;
-        })
+        }),
 
+  // Members sub-router
+  members,
 });

@@ -182,18 +182,7 @@ export const chat = router({
                 }
             });
             // Notify via Pusher
-            await PusherService.emitChannelEvent(input.channelId, "new_message", {
-                chatId: chat.id,
-                channelId: input.channelId,
-                userId: ctx.session.user.id,
-                user: {
-                    id: ctx.session.user.id,
-                    name: chat.user?.name,
-                    image: chat.user?.image,
-                },
-                message: input.message,
-                createdAt: chat.createdAt,
-            });
+            await PusherService.emitChannelEvent(input.channelId, "new_message", chat);
             return chat;
         }),
     editMessage: authedProcedure

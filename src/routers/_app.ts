@@ -7,6 +7,7 @@ import { worksheets } from './worksheets.js';
 import { studyguide } from './studyguide.js';
 import { podcast } from './podcast.js';
 import { chat } from './chat.js';
+import { members } from './members.js';
 
 export const appRouter = router({
   auth,
@@ -16,6 +17,10 @@ export const appRouter = router({
   studyguide,
   podcast,
   chat,
+  // Public member endpoints (for invitation acceptance)
+  member: router({
+    acceptInvite: members.acceptInvite,
+  }),
 });
 
 // Export type for client inference

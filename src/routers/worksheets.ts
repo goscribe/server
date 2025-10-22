@@ -61,7 +61,7 @@ export const worksheets = router({
             ...q,
             meta: {
               ...existingMeta,
-              completed: p.completed,
+              completed: p.modified,
               userAnswer: p.userAnswer,
               completedAt: p.completedAt,
             },
@@ -69,7 +69,7 @@ export const worksheets = router({
         }),
       }));
 
-      return merged as any;
+      return merged;
     }),
 
   // Create a worksheet set
@@ -152,7 +152,7 @@ export const worksheets = router({
             ...q,
             meta: {
               ...existingMeta,
-              completed: p.completed,
+              completed: p.modified,
               userAnswer: p.userAnswer,
               completedAt: p.completedAt,
             },
@@ -160,7 +160,7 @@ export const worksheets = router({
         }),
       };
 
-      return merged as any;
+      return merged;
     }),
 
   // Add a question to a worksheet
@@ -239,6 +239,7 @@ export const worksheets = router({
       problemId: z.string(),
       completed: z.boolean(),
       answer: z.string().optional(),
+      correct: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       // Verify question ownership through worksheet
@@ -264,13 +265,14 @@ export const worksheets = router({
         create: {
           worksheetQuestionId: input.problemId,
           userId: ctx.session.user.id,
-          completed: input.completed,
+          modified: input.completed,
           userAnswer: input.answer,
+          correct: input.correct,
           completedAt: input.completed ? new Date() : null,
           attempts: 1,
         },
         update: {
-          completed: input.completed,
+          modified: input.completed,
           userAnswer: input.answer,
           completedAt: input.completed ? new Date() : null,
           attempts: { increment: 1 },
@@ -402,12 +404,6 @@ export const worksheets = router({
 
       await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_load_start', { source: 'prompt' });
 
-      const session = await aiSessionService.initSession(input.workspaceId);
-      await aiSessionService.setInstruction(session.id, `Create a worksheet with ${input.numQuestions} questions at ${input.difficulty} difficulty from this prompt. Return JSON.\n\nPrompt:\n${input.prompt}`);
-      await aiSessionService.startLLMSession(session.id);
-
-      const content = await aiSessionService.generateWorksheetQuestions(session.id, input.numQuestions, input.difficulty);
-      await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: content.length });
 
       const artifact = await ctx.db.artifact.create({
         data: {
@@ -417,9 +413,18 @@ export const worksheets = router({
           createdById: ctx.session.user.id,
           difficulty: (input.difficulty.toUpperCase()) as any,
           estimatedTime: input.estimatedTime,
+          generating: true,
+          generatingMetadata: { quantity: input.numQuestions, difficulty: input.difficulty.toLowerCase() },
         },
       });
+      await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: input.numQuestions });
 
+      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
+      await aiSessionService.setInstruction(session.id, `Create a worksheet with ${input.numQuestions} questions at ${input.difficulty} difficulty from this prompt. Return JSON.\n\nPrompt:\n${input.prompt}`);
+      await aiSessionService.startLLMSession(session.id);
+
+      
+      const content = await aiSessionService.generateWorksheetQuestions(session.id, input.numQuestions, input.difficulty as any);
       try {
         const worksheetData = JSON.parse(content);
         let actualWorksheetData = worksheetData;
@@ -466,6 +471,11 @@ export const worksheets = router({
           }
         }
       }
+
+      await ctx.db.artifact.update({
+        where: { id: artifact.id },
+        data: { generating: false },
+      });
 
       await PusherService.emitWorksheetComplete(input.workspaceId, artifact);
       aiSessionService.deleteSession(session.id);

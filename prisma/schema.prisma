@@ -50,11 +50,15 @@ model User {
   // Ownership
   folders       Folder[]          @relation("UserFolders")
   workspaces    Workspace[]       @relation("UserWorkspaces")
-  invitedInWorkspaces Workspace[]       @relation("WorkspaceSharedWith") // many-to-many
+  invitedInWorkspaces Workspace[]       @relation("WorkspaceSharedWith") // many-to-many (deprecated)
+  workspaceMemberships WorkspaceMember[] // proper member management
   uploads       FileAsset[]       @relation("UserUploads")
   artifacts     Artifact[]        @relation("UserArtifacts")
   versions      ArtifactVersion[] @relation("UserArtifactVersions")
   worksheetQuestionProgress WorksheetQuestionProgress[]
+  
+  // Invitations
+  sentInvitations WorkspaceInvitation[] @relation("UserInvitations")
 
   chats         Chat[]
   createdAt     DateTime  @default(now())
@@ -89,6 +93,7 @@ model Folder {
   parentId  String?
   parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
   children  Folder[]  @relation("FolderChildren")
+  color     String   @default("#9D00FF")
 
   // Files (workspaces) inside folders
   workspaces Workspace[]
@@ -107,6 +112,8 @@ model Workspace {
   description String?  // optional notes/description for the "file"
   ownerId     String
   owner       User     @relation("UserWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
+  icon        String   @default("📄")
+  color       String   @default("#9D00FF")
 
   // A workspace (file) lives in a folder (nullable = root)
   folderId    String?
@@ -114,15 +121,17 @@ model Workspace {
   
   channels  Channel[]
 
-  shareLink   String?  @unique // optional public share link
-
-  sharedWith  User[]   @relation("WorkspaceSharedWith") // many-to-many for sharing
+  sharedWith  User[]   @relation("WorkspaceSharedWith") // many-to-many for sharing (deprecated)
+  members     WorkspaceMember[] // proper member management with roles
 
   // Raw uploads attached to this workspace
   uploads     FileAsset[]
 
   // AI outputs for this workspace (study guides, flashcards, etc.)
   artifacts   Artifact[]
+  
+  // Invitations
+  invitations WorkspaceInvitation[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -198,6 +207,9 @@ model Artifact {
   type        ArtifactType
   title       String
   isArchived  Boolean      @default(false)
+
+  generating Boolean      @default(false)
+  generatingMetadata Json?    
 
   // Worksheet-specific fields
   difficulty  Difficulty?  // only meaningful for WORKSHEET
@@ -292,8 +304,9 @@ model WorksheetQuestionProgress {
   userId               String
   user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  completed            Boolean           @default(false)
+  modified            Boolean           @default(false)
   userAnswer           String?
+  correct              Boolean?           @default(false)
   completedAt          DateTime?
   attempts             Int               @default(0)
   timeSpentSec         Int?
@@ -304,4 +317,51 @@ model WorksheetQuestionProgress {
 
   @@unique([worksheetQuestionId, userId])
   @@index([userId])
+}
+
+//
+// Workspace Members (with roles)
+//
+model WorkspaceMember {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  role        String    @default("member") // "owner", "admin", "member"
+  
+  joinedAt    DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@unique([workspaceId, userId]) // One membership per user per workspace
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+//
+// Workspace Invitations
+//
+model WorkspaceInvitation {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  email       String
+  role        String    @default("member") // "owner", "admin", "member"
+  token       String    @unique @default(cuid()) // UUID for invitation link
+  
+  invitedById String
+  invitedBy   User      @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
+  
+  acceptedAt  DateTime?
+  expiresAt   DateTime  @default(dbgenerated("NOW() + INTERVAL '7 days'"))
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@unique([workspaceId, email]) // One invitation per email per workspace
+  @@index([token])
+  @@index([workspaceId])
 }
