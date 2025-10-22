@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { logger } from './logger';
+import { logger } from './logger.js';
 
 // External AI service configuration
 const AI_SERVICE_URL = 'https://7gzvf7uib04yp9-61016.proxy.runpod.net/upload';

@@ -1,5 +1,5 @@
 import Pusher from 'pusher';
-import { logger } from './logger';
+import { logger } from './logger.js';
 
 // Server-side Pusher instance
 export const pusher = new Pusher({
