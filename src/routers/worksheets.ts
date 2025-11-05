@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { router, authedProcedure } from '../trpc.js';
 import { aiSessionService } from '../lib/ai-session.js';
 import PusherService from '../lib/pusher.js';
+import { logger } from '../lib/logger.js';
 
 // Avoid importing Prisma enums directly; mirror values as string literals
 const ArtifactType = {
@@ -57,6 +58,7 @@ export const worksheets = router({
           const p = progressByQuestionId.get(q.id);
           if (!p) return q;
           const existingMeta = q.meta ? (typeof q.meta === 'object' ? q.meta : JSON.parse(q.meta as any)) : {} as any;
+          const progressMeta = p.meta ? (typeof p.meta === 'object' ? p.meta : JSON.parse(p.meta as any)) : {} as any;
           return {
             ...q,
             meta: {
@@ -64,6 +66,7 @@ export const worksheets = router({
               completed: p.modified,
               userAnswer: p.userAnswer,
               completedAt: p.completedAt,
+              userMarkScheme: progressMeta.userMarkScheme,
             },
           } as typeof q;
         }),
@@ -148,6 +151,7 @@ export const worksheets = router({
           const p = progressByQuestionId.get(q.id);
           if (!p) return q;
           const existingMeta = q.meta ? (typeof q.meta === 'object' ? q.meta : JSON.parse(q.meta as any)) : {} as any;
+          const progressMeta = p.meta ? (typeof p.meta === 'object' ? p.meta : JSON.parse(p.meta as any)) : {} as any;
           return {
             ...q,
             meta: {
@@ -155,6 +159,7 @@ export const worksheets = router({
               completed: p.modified,
               userAnswer: p.userAnswer,
               completedAt: p.completedAt,
+              userMarkScheme: progressMeta.userMarkScheme,
             },
           } as typeof q;
         }),
@@ -402,9 +407,6 @@ export const worksheets = router({
       const workspace = await ctx.db.workspace.findFirst({ where: { id: input.workspaceId, ownerId: ctx.session.user.id } });
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
 
-      await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_load_start', { source: 'prompt' });
-
-
       const artifact = await ctx.db.artifact.create({
         data: {
           workspaceId: input.workspaceId,
@@ -418,13 +420,9 @@ export const worksheets = router({
         },
       });
       await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: input.numQuestions });
-
-      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
-      await aiSessionService.setInstruction(session.id, `Create a worksheet with ${input.numQuestions} questions at ${input.difficulty} difficulty from this prompt. Return JSON.\n\nPrompt:\n${input.prompt}`);
-      await aiSessionService.startLLMSession(session.id);
-
+      try {
       
-      const content = await aiSessionService.generateWorksheetQuestions(session.id, input.numQuestions, input.difficulty as any);
+      const content = await aiSessionService.generateWorksheetQuestions(input.workspaceId, ctx.session.user.id, input.numQuestions, input.difficulty as any);
       try {
         const worksheetData = JSON.parse(content);
         let actualWorksheetData = worksheetData;
@@ -438,6 +436,7 @@ export const worksheets = router({
           const answer = problem.answer || problem.solution || `Answer ${i + 1}`;
           const type = problem.type || 'TEXT';
           const options = problem.options || [];
+
           await ctx.db.worksheetQuestion.create({
             data: {
               artifactId: artifact.id,
@@ -448,28 +447,17 @@ export const worksheets = router({
               meta: { 
                 type,
                 options: options.length > 0 ? options : undefined,
+                mark_scheme: problem.mark_scheme || undefined,
               },
             },
           });
         }
       } catch {
-        const lines = content.split('\n').filter(line => line.trim());
-        for (let i = 0; i < Math.min(lines.length, input.numQuestions); i++) {
-          const line = lines[i];
-          if (line.includes(' - ')) {
-            const [q, a] = line.split(' - ');
-            await ctx.db.worksheetQuestion.create({
-              data: {
-                artifactId: artifact.id,
-                prompt: q.trim(),
-                answer: a.trim(),
-                difficulty: (input.difficulty.toUpperCase()) as any,
-                order: i,
-                meta: { type: 'TEXT' },
-              },
-            });
-          }
-        }
+        logger.error('Failed to parse worksheet JSON,');
+        await ctx.db.artifact.delete({
+          where: { id: artifact.id },
+        });
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to parse worksheet JSON' });
       }
 
       await ctx.db.artifact.update({
@@ -478,10 +466,94 @@ export const worksheets = router({
       });
 
       await PusherService.emitWorksheetComplete(input.workspaceId, artifact);
-      aiSessionService.deleteSession(session.id);
+    } catch (error) {
+      await ctx.db.artifact.delete({
+        where: { id: artifact.id },
+      });
+      await PusherService.emitError(input.workspaceId, `Failed to generate worksheet: ${error instanceof Error ? error.message : 'Unknown error'}`, 'worksheet_generation');
+      throw error;
+    }
 
       return { artifact };
     }),
-});
+    checkAnswer: authedProcedure
+    .input(z.object({
+      worksheetId: z.string(),
+      questionId: z.string(),
+      answer: z.string().min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const worksheet = await ctx.db.artifact.findFirst({ where: { id: input.worksheetId, type: ArtifactType.WORKSHEET, workspace: { ownerId: ctx.session.user.id } }, include: { workspace: true } });
+      if (!worksheet) throw new TRPCError({ code: 'NOT_FOUND' });
+      const question = await ctx.db.worksheetQuestion.findFirst({ where: { id: input.questionId, artifactId: input.worksheetId } });
+      if (!question) throw new TRPCError({ code: 'NOT_FOUND' });
+      
+      // Parse question meta to get mark_scheme
+      const questionMeta = question.meta ? (typeof question.meta === 'object' ? question.meta : JSON.parse(question.meta as any)) : {} as any;
+      const markScheme = questionMeta.mark_scheme;
+
+      let isCorrect = false;
+      let userMarkScheme = null;
+
+      // If mark scheme exists, use AI marking
+      if (markScheme && markScheme.points && markScheme.points.length > 0) {
+        try {
+          userMarkScheme = await aiSessionService.checkWorksheetQuestions(
+            worksheet.workspace.id,
+            ctx.session.user.id,
+            question.prompt,
+            input.answer,
+            markScheme
+          );
+          
+          // Determine if correct by comparing achieved points vs total points
+          const achievedTotal = userMarkScheme.points.reduce((sum: number, p: any) => sum + (p.achievedPoints || 0), 0);
+          isCorrect = achievedTotal === markScheme.totalPoints;
+          
+        } catch (error) {
+          logger.error('Failed to check answer with AI', error instanceof Error ? error.message : 'Unknown error');
+          // Fallback to simple string comparison
+          isCorrect = question.answer === input.answer;
+        }
+      } else {
+        // Simple string comparison if no mark scheme
+        isCorrect = question.answer === input.answer;
+      }
+
+
+      
+      // @todo: figure out this wierd fix
+      const progress = await ctx.db.worksheetQuestionProgress.upsert({
+        where: {
+          worksheetQuestionId_userId: {
+            worksheetQuestionId: input.questionId,
+            userId: ctx.session.user.id,
+          },
+        },
+        create: {
+          worksheetQuestionId: input.questionId,
+          userId: ctx.session.user.id,
+          modified: true,
+          userAnswer: input.answer,
+          correct: isCorrect,
+          completedAt: new Date(),
+          attempts: 1,
+          meta: userMarkScheme ? { userMarkScheme: JSON.parse(JSON.stringify(userMarkScheme)) } : { userMarkScheme: null },
+        },
+        update: {
+          modified: true,
+          userAnswer: input.answer,
+          correct: isCorrect,
+          completedAt: new Date(),
+          attempts: { increment: 1 },
+          meta: userMarkScheme
+            ? { userMarkScheme: JSON.parse(JSON.stringify(userMarkScheme)) }
+            : { userMarkScheme: null },
+        },
+      });
+
+      return { isCorrect, userMarkScheme, progress };
+    }),
+  });
 
 

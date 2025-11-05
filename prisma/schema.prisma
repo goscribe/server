@@ -55,6 +55,9 @@ model User {
   uploads       FileAsset[]       @relation("UserUploads")
   artifacts     Artifact[]        @relation("UserArtifacts")
   versions      ArtifactVersion[] @relation("UserArtifactVersions")
+  
+  // Progress tracking
+  flashcardProgress         FlashcardProgress[]       @relation("UserFlashcardProgress")
   worksheetQuestionProgress WorksheetQuestionProgress[]
   
   // Invitations
@@ -123,6 +126,9 @@ model Workspace {
 
   sharedWith  User[]   @relation("WorkspaceSharedWith") // many-to-many for sharing (deprecated)
   members     WorkspaceMember[] // proper member management with roles
+  fileBeingAnalyzed Boolean @default(false)
+
+  analysisProgress Json?
 
   // Raw uploads attached to this workspace
   uploads     FileAsset[]
@@ -223,6 +229,7 @@ model Artifact {
   versions    ArtifactVersion[] // text/transcript versions etc.
   flashcards  Flashcard[]       // only meaningful for FLASHCARD_SET
   questions   WorksheetQuestion[] // only meaningful for WORKSHEET
+  podcastSegments PodcastSegment[] // only meaningful for PODCAST_EPISODE
 
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -266,9 +273,49 @@ model Flashcard {
   tags       String[] // optional keywords
   order      Int      @default(0)
 
+  // User progress tracking
+  progress   FlashcardProgress[]
+
   createdAt  DateTime @default(now())
 
   @@index([artifactId])
+}
+
+//
+// User Progress on Flashcards (spaced repetition, mastery tracking)
+//
+model FlashcardProgress {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("UserFlashcardProgress", fields: [userId], references: [id], onDelete: Cascade)
+  
+  flashcardId String
+  flashcard   Flashcard @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
+
+  // Study statistics
+  timesStudied              Int      @default(0)
+  timesCorrect              Int      @default(0)
+  timesIncorrect            Int      @default(0)
+  timesIncorrectConsecutive Int      @default(0)  // Track consecutive failures
+  
+  // Spaced repetition data
+  easeFactor      Float    @default(2.5)  // SM-2 algorithm ease factor
+  interval        Int      @default(0)     // Days until next review
+  repetitions     Int      @default(0)     // Consecutive correct answers
+  
+  // Mastery level (0-100)
+  masteryLevel    Int      @default(0)
+  
+  // Timestamps
+  lastStudiedAt   DateTime?
+  nextReviewAt    DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, flashcardId])
+  @@index([userId, nextReviewAt])
+  @@index([flashcardId])
 }
 
 //
@@ -364,4 +411,36 @@ model WorkspaceInvitation {
   @@unique([workspaceId, email]) // One invitation per email per workspace
   @@index([token])
   @@index([workspaceId])
+}
+
+//
+// Podcast Segments (child items of a PODCAST_EPISODE Artifact)
+//
+model PodcastSegment {
+  id         String   @id @default(cuid())
+  artifactId String
+  artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  title      String
+  content    String   // Full text content of the segment
+  startTime  Int      // Start time in seconds
+  duration   Int      // Duration in seconds
+  order      Int      // Display order within the episode
+  
+  // Audio file reference
+  objectKey  String?  // Google Cloud Storage object key
+  audioUrl   String?  // Cached signed URL (temporary)
+  
+  // Metadata
+  keyPoints  String[] // Array of key points
+  meta       Json?    // Additional metadata (voice settings, etc.)
+  
+  generating Boolean @default(false)
+  generatingMetadata Json? // Additional metadata (voice settings, etc.)
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([artifactId, order]) // For efficient ordering
+  @@index([artifactId, startTime]) // For time-based queries
 }

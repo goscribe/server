@@ -22,9 +22,9 @@
   "dependencies": {
     "@auth/express": "^0.11.0",
     "@auth/prisma-adapter": "^2.10.0",
-    "@google-cloud/storage": "^7.17.0",
     "@goscribe/server": "^1.0.8",
     "@prisma/client": "^6.14.0",
+    "@supabase/supabase-js": "^2.76.1",
     "@trpc/server": "^11.5.0",
     "@types/uuid": "^10.0.0",
     "@vingeray/editorjs-markdown-converter": "^0.1.2",

@@ -4,6 +4,7 @@ import { router, authedProcedure } from '../trpc.js';
 import createInferenceService from '../lib/inference.js';
 import { aiSessionService } from '../lib/ai-session.js';
 import PusherService from '../lib/pusher.js';
+import { createFlashcardProgressService } from '../services/flashcard-progress.service.js';
 // Prisma enum values mapped manually to avoid type import issues in ESM
 const ArtifactType = {
   STUDY_GUIDE: 'STUDY_GUIDE',
@@ -38,7 +39,16 @@ export const flashcards = router({
       const set = await ctx.db.artifact.findFirst({
         where: { workspaceId: input.workspaceId, type: ArtifactType.FLASHCARD_SET, workspace: { ownerId: ctx.session.user.id } },
         include: {
-          flashcards: true,
+          flashcards: {
+            include: {
+              progress: {
+                where: {
+                  userId: ctx.session.user.id,
+                },
+              },
+            }
+          },
+
         },
         orderBy: { updatedAt: 'desc' },
       });
@@ -145,8 +155,6 @@ export const flashcards = router({
       });
       if (!workspace) throw new TRPCError({ code: 'NOT_FOUND' });
 
-      // Pusher start
-      await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_load_start', { source: 'prompt' });
       const flashcardCurrent = await ctx.db.artifact.findFirst({
         where: {
           workspaceId: input.workspaceId,
@@ -161,6 +169,7 @@ export const flashcards = router({
         },
       });
 
+      try {
       await ctx.db.artifact.update({
         where: { id: flashcardCurrent?.id },
         data: { generating: true, generatingMetadata: { quantity: input.numCards, difficulty: input.difficulty.toLowerCase() } },
@@ -198,28 +207,17 @@ export const flashcards = router({
           },
         },
       });
-
-      // Init AI session and seed with prompt as instruction
-      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
-      await aiSessionService.setInstruction(session.id, partialPrompt);
-
-      await aiSessionService.startLLMSession(session.id);
       
       const currentCards = flashcardCurrent?.flashcards.length || 0;
       const newCards = input.numCards - currentCards;
 
 
-
-
       // Generate
-      const content = await aiSessionService.generateFlashcardQuestions(session.id, input.numCards, input.difficulty);
+      const content = await aiSessionService.generateFlashcardQuestions(input.workspaceId, ctx.session.user.id, input.numCards, input.difficulty);
 
-      // Previous cards
-
-      // Parse and create cards
       let createdCards = 0;
       try {
-        const flashcardData = JSON.parse(content);
+        const flashcardData: any = content;
         for (let i = 0; i < Math.min(flashcardData.length, input.numCards); i++) {
           const card = flashcardData[i];
           const front = card.term || card.front || card.question || card.prompt || `Question ${i + 1}`;
@@ -259,10 +257,79 @@ export const flashcards = router({
       // Pusher complete
       await PusherService.emitFlashcardComplete(input.workspaceId, artifact);
 
-      // Cleanup AI session (best-effort)
-      aiSessionService.deleteSession(session.id);
-
       return { artifact, createdCards };
+
+    } catch (error) {
+      await ctx.db.artifact.update({ where: { id: flashcardCurrent?.id }, data: { generating: false } });
+      await PusherService.emitError(input.workspaceId, `Failed to generate flashcards: ${error}`, 'flash_card_generation');
+      throw error;
+    }
+    }),
+
+  // Record study attempt
+  recordStudyAttempt: authedProcedure
+    .input(z.object({
+      flashcardId: z.string().cuid(),
+      isCorrect: z.boolean(),
+      confidence: z.enum(['easy', 'medium', 'hard']).optional(),
+      timeSpentMs: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.recordStudyAttempt({
+        userId: ctx.userId,
+        ...input,
+      });
+    }),
+
+  // Get progress for a flashcard set
+  getSetProgress: authedProcedure
+    .input(z.object({ artifactId: z.string().cuid() }))
+    .query(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.getSetProgress(ctx.userId, input.artifactId);
+    }),
+
+  // Get flashcards due for review
+  getDueFlashcards: authedProcedure
+    .input(z.object({ workspaceId: z.string().cuid().optional() }))
+    .query(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.getDueFlashcards(ctx.userId, input.workspaceId);
+    }),
+
+  // Get statistics for a flashcard set
+  getSetStatistics: authedProcedure
+    .input(z.object({ artifactId: z.string().cuid() }))
+    .query(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.getSetStatistics(ctx.userId, input.artifactId);
+    }),
+
+  // Reset progress for a flashcard
+  resetProgress: authedProcedure
+    .input(z.object({ flashcardId: z.string().cuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.resetProgress(ctx.userId, input.flashcardId);
+    }),
+
+  // Bulk record study session
+  recordStudySession: authedProcedure
+    .input(z.object({
+      attempts: z.array(z.object({
+        flashcardId: z.string().cuid(),
+        isCorrect: z.boolean(),
+        confidence: z.enum(['easy', 'medium', 'hard']).optional(),
+        timeSpentMs: z.number().optional(),
+      })),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const service = createFlashcardProgressService(ctx.db);
+      return service.recordStudySession({
+        userId: ctx.userId,
+        ...input,
+      });
     }),
 });
 

@@ -1,9 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import { logger } from './logger.js';
+import { MarkScheme, UserMarkScheme } from '../types/index.js';
 
 // External AI service configuration
-const AI_SERVICE_URL = 'https://7gzvf7uib04yp9-61016.proxy.runpod.net/upload';
-const AI_RESPONSE_URL = 'https://7gzvf7uib04yp9-61016.proxy.runpod.net/last_response';
+// const AI_SERVICE_URL = 'https://7gzvf7uib04yp9-61016.proxy.runpod.net/upload';
+// const AI_RESPONSE_URL = 'https://7gzvf7uib04yp9-61016.proxy.runpod.net/last_response';
+const AI_SERVICE_URL = process.env.INFERENCE_API_URL + '/upload';
+const AI_RESPONSE_URL = process.env.INFERENCE_API_URL + '/last_response';
+
+console.log('AI_SERVICE_URL', AI_SERVICE_URL);
+console.log('AI_RESPONSE_URL', AI_RESPONSE_URL);
 
 // Mock mode flag - when true, returns fake responses instead of calling AI service
 const MOCK_MODE = process.env.DONT_TEST_INFERENCE === 'true';
@@ -18,7 +24,7 @@ export interface AISession {
   updatedAt: Date;
 }
 
-const IMITATE_WAIT_TIME_MS = 1000 * 10;
+const IMITATE_WAIT_TIME_MS = MOCK_MODE ?  1000 * 10 : 0;
 
 export class AISessionService {
   private sessions = new Map<string, AISession>();
@@ -110,7 +116,7 @@ export class AISessionService {
   }
 
   // Upload file to AI session
-  async uploadFile(sessionId: string, file: File, fileType: 'image' | 'pdf'): Promise<void> {
+  async uploadFile(sessionId: string, user: string, file: File, fileType: 'image' | 'pdf'): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
@@ -131,7 +137,8 @@ export class AISessionService {
     const formData = new FormData();
     formData.append('command', command);
     formData.append('file', file);
-
+    formData.append('session', sessionId);
+    formData.append('user', user);
     try {
       const response = await fetch(AI_SERVICE_URL, {
         method: 'POST',
@@ -160,105 +167,10 @@ export class AISessionService {
     }
   }
 
-  // Set instruction text
-  async setInstruction(sessionId: string, instructionText: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
 
-    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
-    // Mock mode - simulate setting instruction
-    if (MOCK_MODE) {
-      console.log(`🎭 MOCK MODE: Setting instruction for session ${sessionId}: "${instructionText.substring(0, 50)}..."`);
-      session.instructionText = instructionText;
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('command', 'set_instruct');
-    formData.append('instruction_text', instructionText);
-
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      console.log(`📋 Set instruction result:`, result);
-      if (!result.message) {
-        throw new Error(`AI service error: No response message`);
-      }
-
-      // Update session
-      session.instructionText = instructionText;
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to set instruction: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
-  }
-
-  // Start LLM session
-  async startLLMSession(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
-    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
-    // Mock mode - simulate starting LLM session
-    if (MOCK_MODE) {
-      console.log(`🎭 MOCK MODE: Starting LLM session for ${sessionId}`);
-      session.status = 'ready';
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('command', 'start_LLM_session');
-
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      console.log(`📋 Start LLM result:`, result);
-      if (!result.message) {
-        throw new Error(`AI service error: No response message`);
-      }
-
-      // Update session
-      session.status = 'ready';
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to start LLM session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
-  }
 
   // Generate study guide
-  async generateStudyGuide(sessionId: string): Promise<string> {
+  async generateStudyGuide(sessionId: string, user: string): Promise<string> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
@@ -291,7 +203,8 @@ This mock study guide demonstrates the structure and format that would be genera
 
     const formData = new FormData();
     formData.append('command', 'generate_study_guide');
-
+    formData.append('session', sessionId);
+    formData.append('user', user);
     try {
       const response = await fetch(AI_SERVICE_URL, {
         method: 'POST',
@@ -302,12 +215,8 @@ This mock study guide demonstrates the structure and format that would be genera
         throw new Error(`AI service error: ${response.status} ${response.statusText}`);
       }
 
-      // Get the generated content from the response endpoint
-      const contentResponse = await fetch(AI_RESPONSE_URL);
-      if (!contentResponse.ok) {
-        throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
-      }
-      return (await contentResponse.json())['last_response'];
+      const result = await response.json();
+      return result.markdown;
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -317,11 +226,11 @@ This mock study guide demonstrates the structure and format that would be genera
   }
 
   // Generate flashcard questions
-  async generateFlashcardQuestions(sessionId: string, numQuestions: number, difficulty: 'easy' | 'medium' | 'hard'): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
+  async generateFlashcardQuestions(sessionId: string, user: string, numQuestions: number, difficulty: 'easy' | 'medium' | 'hard'): Promise<string> {
+    // const session = this.sessions.get(sessionId);
+    // if (!session) {
+    //   throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
+    // }
 
     await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
     // Mock mode - return fake flashcard questions
@@ -338,6 +247,8 @@ This mock study guide demonstrates the structure and format that would be genera
 
     const formData = new FormData();
     formData.append('command', 'generate_flashcard_questions');
+    formData.append('session', sessionId);
+    formData.append('user', user);
     formData.append('num_questions', numQuestions.toString());
     formData.append('difficulty', difficulty);
 
@@ -351,13 +262,11 @@ This mock study guide demonstrates the structure and format that would be genera
         throw new Error(`AI service error: ${response.status} ${response.statusText}`);
       }
 
-      // Get the generated content from the response endpoint
-      const contentResponse = await fetch(AI_RESPONSE_URL);
-      if (!contentResponse.ok) {
-        throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
-      }
+      const result = await response.json();
 
-      return (await contentResponse.json())['last_response'];
+      console.log(JSON.parse(result.flashcards))
+
+      return JSON.parse(result.flashcards).flashcards;
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -367,12 +276,7 @@ This mock study guide demonstrates the structure and format that would be genera
   }
 
   // Generate worksheet questions
-  async generateWorksheetQuestions(sessionId: string, numQuestions: number, difficulty: 'EASY' | 'MEDIUM' | 'HARD'): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
+  async generateWorksheetQuestions(sessionId: string, user: string, numQuestions: number, difficulty: 'EASY' | 'MEDIUM' | 'HARD'): Promise<string> {
     await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
     // Mock mode - return fake worksheet questions
     if (MOCK_MODE) {
@@ -403,8 +307,11 @@ This mock study guide demonstrates the structure and format that would be genera
 
     const formData = new FormData();
     formData.append('command', 'generate_worksheet_questions');
+    formData.append('session', sessionId);
+    formData.append('user', user);
     formData.append('num_questions', numQuestions.toString());
     formData.append('difficulty', difficulty);
+
 
     try {
       const response = await fetch(AI_SERVICE_URL, {
@@ -416,13 +323,11 @@ This mock study guide demonstrates the structure and format that would be genera
         throw new Error(`AI service error: ${response.status} ${response.statusText}`);
       }
 
-      // Get the generated content from the response endpoint
-      const contentResponse = await fetch(AI_RESPONSE_URL);
-      if (!contentResponse.ok) {
-        throw new Error(`Failed to retrieve generated content: ${contentResponse.status}`);
-      }
+      const result = await response.json();
 
-      return (await contentResponse.json())['last_response'];
+      console.log(JSON.parse(result.worksheet));
+
+      return result.worksheet;
     } catch (error) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -431,8 +336,33 @@ This mock study guide demonstrates the structure and format that would be genera
     }
   }
 
+  async checkWorksheetQuestions(sessionId: string, user: string, question: string, answer: string, mark_scheme: MarkScheme): Promise<UserMarkScheme> {
+    const formData = new FormData();
+
+    formData.append('command', 'mark_worksheet_questions');
+    formData.append('session', sessionId);
+    formData.append('user', user);
+    formData.append('question', question);
+    formData.append('answer', answer);
+    formData.append('mark_scheme', JSON.stringify(mark_scheme));
+
+    const response = await fetch(AI_SERVICE_URL, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log(result.marking);
+    return JSON.parse(result.marking);
+  }
+  
+
   // Analyse PDF
-  async analysePDF(sessionId: string): Promise<string> {
+  async analysePDF(sessionId: string, user: string): Promise<string> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
@@ -460,7 +390,8 @@ Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
 
     const formData = new FormData();
     formData.append('command', 'analyse_pdf');
-
+    formData.append('session', sessionId);
+    formData.append('user', user);
     try {
       const response = await fetch(AI_SERVICE_URL, {
         method: 'POST',
@@ -482,7 +413,7 @@ Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
   }
 
   // Analyse Image
-  async analyseImage(sessionId: string): Promise<string> {
+  async analyseImage(sessionId: string, user: string): Promise<string> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
@@ -516,7 +447,8 @@ Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
 
     const formData = new FormData();
     formData.append('command', 'analyse_img');
-
+    formData.append('session', sessionId);
+    formData.append('user', user);
     try {
       const response = await fetch(AI_SERVICE_URL, {
         method: 'POST',

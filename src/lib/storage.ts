@@ -1,18 +1,18 @@
-// src/server/lib/gcs.ts
-import { Storage } from '@google-cloud/storage';
+// src/server/lib/storage.ts
+import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 
-// Initialize Google Cloud Storage
-const storage = new Storage({
-  projectId: process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT_ID,
-  credentials: process.env.GCP_CLIENT_EMAIL && process.env.GCP_PRIVATE_KEY ? {
-    client_email: process.env.GCP_CLIENT_EMAIL,
-    private_key: process.env.GCP_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  } : undefined,
-  keyFilename: process.env.GOOGLE_CLOUD_KEY_FILE || process.env.GCP_KEY_FILE,
-});
+// Initialize Supabase Storage
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const bucketName = process.env.GCP_BUCKET || process.env.GOOGLE_CLOUD_BUCKET_NAME || 'your-bucket-name';
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing required Supabase environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+const bucketName = process.env.SUPABASE_BUCKET || 'media';
 
 export interface UploadResult {
   url: string;
@@ -20,35 +20,39 @@ export interface UploadResult {
   objectKey: string;
 }
 
-export async function uploadToGCS(
+export async function uploadToSupabase(
   fileBuffer: Buffer,
   fileName: string,
   contentType: string,
   makePublic: boolean = false
 ): Promise<UploadResult> {
-  const bucket = storage.bucket(bucketName);
   const objectKey = `podcasts/${uuidv4()}_${fileName}`;
-  const file = bucket.file(objectKey);
 
-  // Upload the file
-  await file.save(fileBuffer, {
-    metadata: {
+  // Upload the file to Supabase Storage
+  const { data, error } = await supabase.storage
+    .from(bucketName)
+    .upload(objectKey, fileBuffer, {
       contentType,
-    },
-    public: makePublic,
-  });
+      upsert: false,
+    });
 
-  const url = `gs://${bucketName}/${objectKey}`;
+  if (error) {
+    throw new Error(`Failed to upload file to Supabase: ${error.message}`);
+  }
+
+  const url = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectKey}`;
   
   // Generate signed URL for private files
   let signedUrl: string | undefined;
   if (!makePublic) {
-    const [signedUrlResult] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-    });
-    signedUrl = signedUrlResult;
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(objectKey, 24 * 60 * 60); // 24 hours
+
+    if (signedUrlError) {
+      throw new Error(`Failed to generate signed URL: ${signedUrlError.message}`);
+    }
+    signedUrl = signedUrlData.signedUrl;
   }
 
   return {
@@ -59,38 +63,39 @@ export async function uploadToGCS(
 }
 
 export async function generateSignedUrl(objectKey: string, expiresInHours: number = 24): Promise<string> {
-  const bucket = storage.bucket(bucketName);
-  const file = bucket.file(objectKey);
+  const { data, error } = await supabase.storage
+    .from(bucketName)
+    .createSignedUrl(objectKey, expiresInHours * 60 * 60);
 
-  const [signedUrl] = await file.getSignedUrl({
-    version: 'v4',
-    action: 'read',
-    expires: Date.now() + expiresInHours * 60 * 60 * 1000,
-  });
+  if (error) {
+    throw new Error(`Failed to generate signed URL: ${error.message}`);
+  }
 
-  return signedUrl;
+  return data.signedUrl;
 }
 
-export async function deleteFromGCS(objectKey: string): Promise<void> {
-  const bucket = storage.bucket(bucketName);
-  const file = bucket.file(objectKey);
-  
-  await file.delete();
+export async function deleteFromSupabase(objectKey: string): Promise<void> {
+  const { error } = await supabase.storage
+    .from(bucketName)
+    .remove([objectKey]);
+
+  if (error) {
+    throw new Error(`Failed to delete file from Supabase: ${error.message}`);
+  }
 }
 
 export async function makeFilePublic(objectKey: string): Promise<void> {
-  const bucket = storage.bucket(bucketName);
-  const file = bucket.file(objectKey);
-  
-  await file.makePublic();
+  // In Supabase, files are public by default when uploaded to public buckets
+  // For private buckets, you would need to update the bucket policy
+  // This function is kept for compatibility but may not be needed
+  console.log(`File ${objectKey} is already public in Supabase Storage`);
 }
 
 export async function makeFilePrivate(objectKey: string): Promise<void> {
-  const bucket = storage.bucket(bucketName);
-  const file = bucket.file(objectKey);
-  
-  await file.makePrivate();
+  // In Supabase, you would need to update the bucket policy to make files private
+  // This function is kept for compatibility but may not be needed
+  console.log(`File ${objectKey} privacy is controlled by bucket policy in Supabase Storage`);
 }
 
-
-export const bucket = storage.bucket(bucketName);
+// Export supabase client for direct access if needed
+export const supabaseClient = supabase;

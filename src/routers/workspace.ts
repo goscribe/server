@@ -1,11 +1,25 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { router, publicProcedure, authedProcedure } from '../trpc.js';
-import { bucket } from '../lib/storage.js';
+import { supabaseClient } from '../lib/storage.js';
 import { ArtifactType } from '@prisma/client';
 import { aiSessionService } from '../lib/ai-session.js';
 import PusherService from '../lib/pusher.js';
 import { members } from './members.js';
+import type { PrismaClient } from '@prisma/client';
+
+// Helper function to update and emit analysis progress
+async function updateAnalysisProgress(
+  db: PrismaClient,
+  workspaceId: string,
+  progress: any
+) {
+  await db.workspace.update({
+    where: { id: workspaceId },
+    data: { analysisProgress: progress }
+  });
+  await PusherService.emitAnalysisProgress(workspaceId, progress);
+}
 
 // Helper function to calculate search relevance score
 function calculateRelevance(query: string, ...texts: (string | null | undefined)[]): number {
@@ -98,11 +112,14 @@ export const workspace = router({
           },
         },
       });
+
+      aiSessionService.initSession(ws.id, ctx.session.user.id);
       return ws;
     }),
   createFolder: authedProcedure
     .input(z.object({
         name: z.string().min(1).max(100),
+        color: z.string().optional(),
         parentId: z.string().optional(),
      }))
     .mutation(async ({ ctx, input }) => {
@@ -110,9 +127,28 @@ export const workspace = router({
         data: {
           name: input.name,
           ownerId: ctx.session.user.id,
+          color: input.color ?? '#9D00FF',
           parentId: input.parentId ?? null,
         },
       });
+      return folder;
+    }),
+  updateFolder: authedProcedure
+    .input(z.object({
+        id: z.string(),
+        name: z.string().min(1).max(100).optional(),
+        color: z.string().optional(),
+     }))
+    .mutation(async ({ ctx, input }) => {
+      const folder = await ctx.db.folder.update({ where: { id: input.id }, data: { name: input.name, color: input.color ?? '#9D00FF' } });
+      return folder;
+    }),
+  deleteFolder: authedProcedure
+    .input(z.object({
+        id: z.string(),
+     }))
+    .mutation(async ({ ctx, input }) => {
+      const folder = await ctx.db.folder.delete({ where: { id: input.id } });
       return folder;
     }),
   get: authedProcedure
@@ -130,6 +166,32 @@ export const workspace = router({
       });
       if (!ws) throw new TRPCError({ code: 'NOT_FOUND' });
       return ws;
+    }),
+  getStats: authedProcedure
+    .query(async ({ ctx }) => {
+      const workspaces = await ctx.db.workspace.findMany({
+        where: {OR: [{ ownerId: ctx.session.user.id }, { sharedWith: { some: { id: ctx.session.user.id } } }]},
+      });
+      const folders = await ctx.db.folder.findMany({
+        where: {OR: [{ ownerId: ctx.session.user.id } ]},
+      });
+      const lastUpdated = await ctx.db.workspace.findFirst({
+        where: {OR: [{ ownerId: ctx.session.user.id }, { sharedWith: { some: { id: ctx.session.user.id } } }]},
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      const spaceLeft = await ctx.db.fileAsset.aggregate({
+        where: { workspaceId: { in: workspaces.map(ws => ws.id) }, userId: ctx.session.user.id },
+        _sum: { size: true },
+      });
+
+      return {
+        workspaces: workspaces.length,
+        folders: folders.length,
+        lastUpdated: lastUpdated?.updatedAt,
+        spaceUsed: spaceLeft._sum?.size ?? 0,
+        spaceLeft: 1000000000 - (spaceLeft._sum?.size ?? 0) || 0,
+      };
     }),
   update: authedProcedure
     .input(z.object({
@@ -217,26 +279,30 @@ export const workspace = router({
         });
 
         // 2. Generate signed URL for direct upload
-        const [url] = await bucket
-          .file(`${ctx.session.user.id}/${record.id}-${file.filename}`)
-          .getSignedUrl({
-            action: "write",
-            expires: Date.now() + 5 * 60 * 1000, // 5 min
-            contentType: file.contentType,
+        const objectKey = `${ctx.session.user.id}/${record.id}-${file.filename}`;
+        const { data: signedUrlData, error: signedUrlError } = await supabaseClient.storage
+          .from('files')
+          .createSignedUploadUrl(objectKey); // 5 minutes
+
+        if (signedUrlError) {
+          throw new TRPCError({ 
+            code: 'INTERNAL_SERVER_ERROR', 
+            message: `Failed to generate upload URL: ${signedUrlError.message}` 
           });
+        }
 
         // 3. Update record with bucket info
         await ctx.db.fileAsset.update({
           where: { id: record.id },
           data: {
-            bucket: bucket.name,
-            objectKey: `${ctx.session.user.id}/${record.id}-${file.filename}`,
+            bucket: 'files',
+            objectKey: objectKey,
           },
         }); 
 
         results.push({
           fileId: record.id,
-          uploadUrl: url,
+          uploadUrl: signedUrlData.signedUrl,
         });
       }
 
@@ -257,13 +323,15 @@ export const workspace = router({
           userId: ctx.session.user.id,
         },
       });
-      // Delete from GCS (best-effort)
+      // Delete from Supabase Storage (best-effort)
       for (const file of files) {
         if (file.bucket && file.objectKey) {
-          const gcsFile: import('@google-cloud/storage').File = bucket.file(file.objectKey);
-          gcsFile.delete({ ignoreNotFound: true }).catch((err: unknown) => {
-            console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
-          });
+          supabaseClient.storage
+            .from(file.bucket)
+            .remove([file.objectKey])
+            .catch((err: unknown) => {
+              console.error(`Error deleting file ${file.objectKey} from bucket ${file.bucket}:`, err);
+            });
         }
       }
 
@@ -307,12 +375,51 @@ export const workspace = router({
         console.error('❌ Workspace not found', { workspaceId: input.workspaceId, userId: ctx.session.user.id });
         throw new TRPCError({ code: 'NOT_FOUND' });
       }
-      console.log('✅ Workspace verified', { workspaceId: workspace.id, workspaceTitle: workspace.title });
 
-      // Convert base64 to buffer
-      console.log('📁 Converting base64 to buffer...');
+      const fileType = input.file.contentType.startsWith('image/') ? 'image' : 'pdf';
+      
+      await ctx.db.workspace.update({
+        where: { id: input.workspaceId },
+        data: { fileBeingAnalyzed: true },
+      });
+
+      try {
+      
+      await updateAnalysisProgress(ctx.db, input.workspaceId, {
+        status: 'starting',
+        filename: input.file.filename,
+        fileType,
+        startedAt: new Date().toISOString(),
+        steps: {
+          fileUpload: {
+            order: 1,
+            status: 'pending',
+          },
+          fileAnalysis: {
+            order: 2,
+            status: 'pending',
+          },
+          studyGuide: {
+            order: 3,
+            status: input.generateStudyGuide ? 'pending' : 'skipped',
+          },
+          flashcards: {
+            order: 4,
+            status: input.generateFlashcards ? 'pending' : 'skipped',
+          },
+        }
+      });
+      } catch (error) {
+        console.error('❌ Failed to update analysis progress:', error);
+        await ctx.db.workspace.update({
+          where: { id: input.workspaceId },
+          data: { fileBeingAnalyzed: false },
+        });
+        await PusherService.emitError(input.workspaceId, `Failed to update analysis progress: ${error}`, 'file_analysis');
+        throw error;
+      }
+
       const fileBuffer = Buffer.from(input.file.content, 'base64');
-      console.log('✅ File buffer created', { bufferSize: fileBuffer.length });
 
       // // Check AI service health first
       // console.log('🏥 Checking AI service health...');
@@ -327,41 +434,120 @@ export const workspace = router({
       // }
       // console.log('✅ AI service is healthy');
 
-      // Initialize AI session
-      console.log('🤖 Initializing AI session...');
-      const session = await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
-      console.log('✅ AI session initialized', { sessionId: session.id });
-      
-      const fileObj = new File([fileBuffer], input.file.filename, { type: input.file.contentType });
-      const fileType = input.file.contentType.startsWith('image/') ? 'image' : 'pdf';
-      console.log('📤 Uploading file to AI service...', { filename: input.file.filename, fileType });
-      await aiSessionService.uploadFile(session.id, fileObj, fileType);
-      console.log('✅ File uploaded to AI service');
-      
-      console.log('🚀 Starting LLM session...');
-      try {
-        await aiSessionService.startLLMSession(session.id);
-        console.log('✅ LLM session started');
-      } catch (error) {
-        console.error('❌ Failed to start LLM session:', error);
-        throw error;
-      }
+      await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
 
-      // Analyze the file first
-      console.log('🔍 Analyzing file...', { fileType });
-      await PusherService.emitTaskComplete(input.workspaceId, 'file_analysis_start', { filename: input.file.filename, fileType });
+      const fileObj = new File([fileBuffer], input.file.filename, { type: input.file.contentType });
+
+      await updateAnalysisProgress(ctx.db, input.workspaceId, {
+        status: 'uploading',
+        filename: input.file.filename,
+        fileType,
+        startedAt: new Date().toISOString(),
+        steps: {
+          fileUpload: {
+            order: 1,
+            status: 'in_progress',
+          },
+          fileAnalysis: {
+            order: 2,
+            status: 'pending',
+          },
+          studyGuide: {
+            order: 3,
+            status: input.generateStudyGuide ? 'pending' : 'skipped',
+          },
+          flashcards: {
+            order: 4,
+            status: input.generateFlashcards ? 'pending' : 'skipped',
+          },
+        }
+      });
+
+      await aiSessionService.uploadFile(input.workspaceId, ctx.session.user.id, fileObj, fileType);
+
+      await updateAnalysisProgress(ctx.db, input.workspaceId, {
+        status: 'analyzing',
+        filename: input.file.filename,
+        fileType,
+        startedAt: new Date().toISOString(),
+        steps: {
+          fileUpload: {
+            order: 1,
+            status: 'completed',
+          },
+          fileAnalysis: {
+            order: 2,
+            status: 'in_progress',
+          },
+          studyGuide: {
+            order: 3,
+            status: input.generateStudyGuide ? 'pending' : 'skipped',
+          },
+          flashcards: {
+            order: 4,
+            status: input.generateFlashcards ? 'pending' : 'skipped',
+          },
+        }
+      });
+
       try {
         if (fileType === 'image') {
-          await aiSessionService.analyseImage(session.id);
-          console.log('✅ Image analysis completed');
+          await aiSessionService.analyseImage(input.workspaceId, ctx.session.user.id);
         } else {
-          await aiSessionService.analysePDF(session.id);
-          console.log('✅ PDF analysis completed');
+          await aiSessionService.analysePDF(input.workspaceId, ctx.session.user.id );
         }
-        await PusherService.emitTaskComplete(input.workspaceId, 'file_analysis_complete', { filename: input.file.filename, fileType });
+        
+        await updateAnalysisProgress(ctx.db, input.workspaceId, {
+          status: 'generating_artifacts',
+          filename: input.file.filename,
+          fileType,
+          startedAt: new Date().toISOString(),
+          steps: {
+            fileUpload: {
+              order: 1,
+              status: 'completed',
+            },
+            fileAnalysis: {
+              order: 2,
+              status: 'completed',
+            },
+            studyGuide: {
+              order: 3,
+              status: input.generateStudyGuide ? 'pending' : 'skipped',
+            },
+            flashcards: {
+              order: 4,
+              status: input.generateFlashcards ? 'pending' : 'skipped',
+            },
+          }
+        });
       } catch (error) {
         console.error('❌ Failed to analyze file:', error);
-        await PusherService.emitError(input.workspaceId, `Failed to analyze ${fileType}: ${error}`, 'file_analysis');
+        await updateAnalysisProgress(ctx.db, input.workspaceId, {
+          status: 'error',
+          filename: input.file.filename,
+          fileType,
+          error: `Failed to analyze ${fileType}: ${error}`,
+          startedAt: new Date().toISOString(),
+          steps: {
+            fileUpload: {
+              order: 1,
+              status: 'completed',
+            },
+            fileAnalysis: {
+              order: 2,
+              status: 'error',
+            },
+            studyGuide: {
+              order: 3,
+              status: 'skipped',
+            },
+            flashcards: {
+              order: 4,
+              status: 'skipped',
+            },
+          }
+        });
         throw error;
       }
 
@@ -383,11 +569,32 @@ export const workspace = router({
 
       // Generate artifacts
       if (input.generateStudyGuide) {
-        await PusherService.emitTaskComplete(input.workspaceId, 'study_guide_load_start', { filename: input.file.filename });
-        const content = await aiSessionService.generateStudyGuide(session.id);
-
-        await PusherService.emitTaskComplete(input.workspaceId, 'study_guide_info', { contentLength: content.length });
+        await updateAnalysisProgress(ctx.db, input.workspaceId, {
+          status: 'generating_study_guide',
+          filename: input.file.filename,
+          fileType,
+          startedAt: new Date().toISOString(),
+          steps: {
+            fileUpload: {
+              order: 1,
+              status: 'completed',
+            },
+            fileAnalysis: {
+              order: 2,
+              status: 'completed',
+            },
+            studyGuide: {
+              order: 3,
+              status: 'in_progress',
+            },
+            flashcards: {
+              order: 4,
+              status: input.generateFlashcards ? 'pending' : 'skipped',
+            },
+          }
+        });
         
+        const content = await aiSessionService.generateStudyGuide(input.workspaceId, ctx.session.user.id);
 
         let artifact = await ctx.db.artifact.findFirst({
           where: { workspaceId: input.workspaceId, type: ArtifactType.STUDY_GUIDE },
@@ -413,16 +620,35 @@ export const workspace = router({
         });
 
         results.artifacts.studyGuide = artifact;
-        
-        // Emit Pusher notification
-        await PusherService.emitStudyGuideComplete(input.workspaceId, artifact);
       }
 
       if (input.generateFlashcards) {
-        await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_load_start', { filename: input.file.filename });
-        const content = await aiSessionService.generateFlashcardQuestions(session.id, 10, 'medium');
-
-        await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_info', { contentLength: content.length });
+        await updateAnalysisProgress(ctx.db, input.workspaceId, {
+          status: 'generating_flashcards',
+          filename: input.file.filename,
+          fileType,
+          startedAt: new Date().toISOString(),
+          steps: {
+            fileUpload: {
+              order: 1,
+              status: 'completed',
+            },
+            fileAnalysis: {
+              order: 2,
+              status: 'completed',
+            },
+            studyGuide: {
+              order: 3,
+              status: input.generateStudyGuide ? 'completed' : 'skipped',
+            },
+            flashcards: {
+              order: 4,
+              status: 'in_progress',
+            },
+          }
+        });
+        
+        const content = await aiSessionService.generateFlashcardQuestions(input.workspaceId, ctx.session.user.id, 10, 'medium');
         
         const artifact = await ctx.db.artifact.create({
           data: {
@@ -435,7 +661,7 @@ export const workspace = router({
         
         // Parse JSON flashcard content
         try {
-          const flashcardData = JSON.parse(content);
+          const flashcardData: any = content;
           
           let createdCards = 0;
           for (let i = 0; i < Math.min(flashcardData.length, 10); i++) {
@@ -476,101 +702,38 @@ export const workspace = router({
         }
         
         results.artifacts.flashcards = artifact;
-        
-        // Emit Pusher notification
-        await PusherService.emitFlashcardComplete(input.workspaceId, artifact);
       }
 
-      if (input.generateWorksheet) {
-        await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_load_start', { filename: input.file.filename });
-        const content = await aiSessionService.generateWorksheetQuestions(session.id, 8, 'MEDIUM');
-        await PusherService.emitTaskComplete(input.workspaceId, 'worksheet_info', { contentLength: content.length });
-        
-        const artifact = await ctx.db.artifact.create({
-          data: {
-            workspaceId: input.workspaceId,
-            type: ArtifactType.WORKSHEET,
-            title: `Worksheet - ${input.file.filename}`,
-            createdById: ctx.session.user.id,
+      await ctx.db.workspace.update({
+        where: { id: input.workspaceId },
+        data: { fileBeingAnalyzed: false },
+      });
+
+      await updateAnalysisProgress(ctx.db, input.workspaceId, {
+        status: 'completed',
+        filename: input.file.filename,
+        fileType,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        steps: {
+          fileUpload: {
+            order: 1,
+            status: 'completed',
           },
-        });
-        
-        // Parse JSON worksheet content
-        try {
-          const worksheetData = JSON.parse(content);
-          
-          // The actual worksheet data is in last_response as JSON
-          let actualWorksheetData = worksheetData;
-          if (worksheetData.last_response) {
-            try {
-              actualWorksheetData = JSON.parse(worksheetData.last_response);
-            } catch (parseError) {
-              console.error('❌ Failed to parse last_response JSON:', parseError);
-              console.log('📋 Raw last_response:', worksheetData.last_response);
-            }
-          }
-          
-          // Handle different JSON structures
-          const problems = actualWorksheetData.problems || actualWorksheetData.questions || actualWorksheetData || [];
-          let createdQuestions = 0;
-          
-          for (let i = 0; i < Math.min(problems.length, 8); i++) {
-            const problem = problems[i];
-            const prompt = problem.question || problem.prompt || `Question ${i + 1}`;
-            const answer = problem.answer || problem.solution || `Answer ${i + 1}`;
-            const type = problem.type || 'TEXT';
-            const options = problem.options || [];
-            
-            await ctx.db.worksheetQuestion.create({
-              data: {
-                artifactId: artifact.id,
-                prompt: prompt,
-                answer: answer,
-                difficulty: 'MEDIUM' as any,
-                order: i,
-                meta: { 
-                  type: type,
-                  options: options.length > 0 ? options : undefined
-                },
-              },
-            });
-            createdQuestions++;
-          }
-          
-        } catch (parseError) {
-          console.error('❌ Failed to parse worksheet JSON, using fallback parsing:', parseError);
-          // Fallback to text parsing if JSON fails
-          const lines = content.split('\n').filter(line => line.trim());
-          for (let i = 0; i < Math.min(lines.length, 8); i++) {
-            const line = lines[i];
-            if (line.includes(' - ')) {
-              const [prompt, answer] = line.split(' - ');
-              await ctx.db.worksheetQuestion.create({
-                data: {
-                  artifactId: artifact.id,
-                  prompt: prompt.trim(),
-                  answer: answer.trim(),
-                  difficulty: 'MEDIUM' as any,
-                  order: i,
-                  meta: { type: 'TEXT', },
-                },
-              });
-            }
-          }
+          fileAnalysis: {
+            order: 2,
+            status: 'completed',
+          },
+          studyGuide: {
+            order: 3,
+            status: input.generateStudyGuide ? 'completed' : 'skipped',
+          },
+          flashcards: {
+            order: 4,
+            status: input.generateFlashcards ? 'completed' : 'skipped',
+          },
         }
-        
-        results.artifacts.worksheet = artifact;
-        
-        // Emit Pusher notification
-        await PusherService.emitWorksheetComplete(input.workspaceId, artifact);
-      }
-
-      await PusherService.emitTaskComplete(input.workspaceId, 'analysis_cleanup_start', { filename: input.file.filename });
-      aiSessionService.deleteSession(session.id);
-      await PusherService.emitTaskComplete(input.workspaceId, 'analysis_cleanup_complete', { filename: input.file.filename });
-      
-      // Emit overall completion notification
-      await PusherService.emitOverallComplete(input.workspaceId, input.file.filename, results.artifacts);
+      });
       
       return results;
     }),
@@ -604,6 +767,23 @@ export const workspace = router({
             },
             take: input.limit,
           });
+          
+          // Update analysisProgress for each workspace with search metadata
+          const workspaceUpdates = workspaces.map(ws => 
+            ctx.db.workspace.update({
+              where: { id: ws.id },
+              data: {
+                analysisProgress: {
+                  lastSearched: new Date().toISOString(),
+                  searchQuery: query,
+                  matchedIn: ws.title.toLowerCase().includes(query.toLowerCase()) ? 'title' : 'description',
+                }
+              }
+            })
+          );
+          
+          await Promise.all(workspaceUpdates);
+          
           return workspaces;
         }),
 

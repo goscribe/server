@@ -16,7 +16,7 @@ export class PusherService {
   static async emitTaskComplete(workspaceId: string, event: string, data: any) {
     try {
       const channel = `workspace_${workspaceId}`;
-      const eventName = `${workspaceId}_${event}`;
+      const eventName = event;
       await pusher.trigger(channel, eventName, data);
       logger.info(`📡 Pusher notification sent: ${eventName} to ${channel}`);
     } catch (error) {
@@ -87,6 +87,17 @@ export class PusherService {
       analysisType,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Emit analysis progress update (single event for all progress updates)
+  static async emitAnalysisProgress(workspaceId: string, progress: any) {
+    try {
+      const channel = `workspace_${workspaceId}`;
+      await pusher.trigger(channel, 'analysis_progress', progress);
+      logger.info(`📡 Analysis progress sent to ${channel}: ${progress.status}`);
+    } catch (error) {
+      console.error('❌ Pusher progress notification error:', error);
+    }
   }
 
   // Emit channel-specific events (for chat messages)
