@@ -221,6 +221,7 @@ model Artifact {
   difficulty  Difficulty?  // only meaningful for WORKSHEET
   estimatedTime String?    // only meaningful for WORKSHEET
 
+  imageObjectKey String?
   description     String?
 
   createdById String?

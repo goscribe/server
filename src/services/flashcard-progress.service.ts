@@ -299,24 +299,70 @@ export class FlashcardProgressService {
   }
 
   /**
-   * Get flashcards due for review
+   * Get flashcards due for review, non-studied flashcards, and flashcards with low mastery
    */
-  async getDueFlashcards(userId: string, workspaceId?: string) {
+  async getDueFlashcards(userId: string, workspaceId: string) {
     const now = new Date();
+    const LOW_MASTERY_THRESHOLD = 50; // Consider mastery < 50 as low
 
-    return this.db.flashcardProgress.findMany({
+    // Get the latest artifact in the workspace
+    const latestArtifact = await this.db.artifact.findFirst({
+      where: {
+        workspaceId,
+        type: 'FLASHCARD_SET',
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (!latestArtifact) {
+      return [];
+    }
+
+    // Get all flashcards from the latest artifact
+    const allFlashcards = await this.db.flashcard.findMany({
+      where: {
+        artifactId: latestArtifact.id,
+      },
+      include: {
+        artifact: true,
+        progress: {
+          where: {
+            userId,
+          },
+        },
+      },
+    });
+
+    console.log('allFlashcards', allFlashcards.length);
+
+    const TAKE_NUMBER = (allFlashcards.length > 10) ? 10 : allFlashcards.length;
+    
+    // Get progress records for flashcards that are due or have low mastery
+    const progressRecords = await this.db.flashcardProgress.findMany({
       where: {
         userId,
-        nextReviewAt: {
-          lte: now,
+        OR: [
+          {
+            nextReviewAt: {
+              lte: now,
+            },
+          },
+          {
+            masteryLevel: {
+              lt: LOW_MASTERY_THRESHOLD,
+            },
+          },
+          {
+            timesStudied: {
+              lt: 3,
+            },
+          }
+        ],
+        flashcard: {
+          artifactId: latestArtifact.id,
         },
-        flashcard: workspaceId
-          ? {
-              artifact: {
-                workspaceId,
-              },
-            }
-          : undefined,
       },
       include: {
         flashcard: {
@@ -325,10 +371,83 @@ export class FlashcardProgressService {
           },
         },
       },
-      orderBy: {
-        nextReviewAt: 'asc',
-      },
+      take: TAKE_NUMBER,
     });
+
+    console.log('TAKE_NUMBER', TAKE_NUMBER);
+    console.log('TAKE_NUMBER - progressRecords.length', TAKE_NUMBER - progressRecords.length);
+    console.log('progressRecords', progressRecords.map((progress) => progress.flashcard.id));
+    
+    // Get flashcard IDs that already have progress records
+    const flashcardIdsWithProgress = new Set(
+      progressRecords.map((progress) => progress.flashcard.id)
+    );
+    
+    // Find flashcards without progress records (non-studied) to pad the results
+    const nonStudiedFlashcards = allFlashcards
+      .filter((flashcard) => !flashcardIdsWithProgress.has(flashcard.id))
+      .slice(0, TAKE_NUMBER - progressRecords.length);
+    
+    // Create progress-like structures for non-studied flashcards
+    const progressRecordsPadding = nonStudiedFlashcards.map((flashcard) => {
+      const { progress, ...flashcardWithoutProgress } = flashcard;
+      return {
+        id: `temp-${flashcard.id}`,
+        userId,
+        flashcardId: flashcard.id,
+        timesStudied: 0,
+        timesCorrect: 0,
+        timesIncorrect: 0,
+        timesIncorrectConsecutive: 0,
+        easeFactor: 2.5,
+        interval: 0,
+        repetitions: 0,
+        masteryLevel: 0,
+        lastStudiedAt: null,
+        nextReviewAt: null,
+        flashcard: flashcardWithoutProgress,
+      };
+    });
+
+    console.log('progressRecordsPadding', progressRecordsPadding.length);
+    console.log('progressRecords', progressRecords.length);
+    const selectedCards = [...progressRecords, ...progressRecordsPadding];
+
+    // Build result array: include progress records and non-studied flashcards
+    const results = [];
+
+    // Add flashcards with progress (due or low mastery)
+    for (const progress of progressRecords) {
+      results.push(progress);
+    }
+
+    // Sort by priority: due first (by nextReviewAt), then low mastery, then non-studied
+    // @todo: make an actual algorithm. research
+    // results.sort((a, b) => {
+    //   // Due flashcards first (nextReviewAt <= now)
+    //   const aIsDue = a.nextReviewAt && a.nextReviewAt <= now;
+    //   const bIsDue = b.nextReviewAt && b.nextReviewAt <= now;
+    //   // if (aIsDue && !bIsDue) return -1;
+    //   // if (!aIsDue && bIsDue) return 1;
+
+    //   // Among due flashcards, sort by nextReviewAt
+    //   if (aIsDue && bIsDue && a.nextReviewAt && b.nextReviewAt) {
+    //     return a.nextReviewAt.getTime() - b.nextReviewAt.getTime();
+    //   }
+
+    //   // Then low mastery (lower mastery first)
+    //   if (a.masteryLevel !== b.masteryLevel) {
+    //     return a.masteryLevel - b.masteryLevel;
+    //   }
+
+    //   // Finally, non-studied (timesStudied === 0)
+    //   if (a.timesStudied === 0 && b.timesStudied !== 0) return -1;
+    //   if (a.timesStudied !== 0 && b.timesStudied === 0) return 1;
+
+    //   return 0;
+    // });
+
+    return selectedCards.map((progress) => progress.flashcard);
   }
 
   /**

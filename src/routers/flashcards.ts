@@ -292,9 +292,10 @@ export const flashcards = router({
 
   // Get flashcards due for review
   getDueFlashcards: authedProcedure
-    .input(z.object({ workspaceId: z.string().cuid().optional() }))
+    .input(z.object({ workspaceId: z.string() }))
     .query(async ({ ctx, input }) => {
       const service = createFlashcardProgressService(ctx.db);
+
       return service.getDueFlashcards(ctx.userId, input.workspaceId);
     }),
 

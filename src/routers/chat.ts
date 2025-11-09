@@ -220,18 +220,7 @@ export const chat = router({
                 }
             });
             // Notify via Pusher
-            await PusherService.emitChannelEvent(chat.channelId, "edit_message", {
-                chatId: updatedChat.id,
-                channelId: updatedChat.channelId,
-                userId: updatedChat.userId,
-                message: input.message,
-                updatedAt: updatedChat.updatedAt,
-                user: {
-                    id: ctx.session.user.id,
-                    name: updatedChat.user?.name,
-                    image: updatedChat.user?.image,
-                },
-            });
+            await PusherService.emitChannelEvent(chat.channelId, "edit_message", updatedChat);
             return updatedChat;
         }),
     deleteMessage: authedProcedure
@@ -259,17 +248,7 @@ export const chat = router({
                 where: { id: input.chatId },
             });
             // Notify via Pusher
-            await PusherService.emitChannelEvent(chat.channelId, "delete_message", {
-                chatId: chat.id,
-                channelId: chat.channelId,
-                userId: chat.userId,
-                deletedAt: new Date().toISOString(),
-                user: {
-                    id: ctx.session.user.id,
-                    name: chat.user?.name,
-                    image: chat.user?.image,
-                },
-            });
+            await PusherService.emitChannelEvent(chat.channelId, "delete_message", chat);
             return { success: true };
         }),
 });

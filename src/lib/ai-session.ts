@@ -359,6 +359,148 @@ This mock study guide demonstrates the structure and format that would be genera
     console.log(result.marking);
     return JSON.parse(result.marking);
   }
+
+  // Generate podcast structure
+  async generatePodcastStructure(
+    sessionId: string, 
+    user: string, 
+    title: string, 
+    description: string, 
+    prompt: string,
+    speakers: Array<{ id: string; role: string; name?: string }>
+  ): Promise<any> {
+    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
+    
+    // Mock mode - return fake podcast structure
+    if (MOCK_MODE) {
+      logger.info(`🎭 MOCK MODE: Generating podcast structure for session ${sessionId}`);
+      return {
+        success: true,
+        structure: {
+          episodeTitle: `${title} - AI Generated Episode`,
+          totalEstimatedDuration: "15 minutes",
+          segments: [
+            {
+              title: "Welcome & Introduction",
+              content: "HOST: Welcome to today's episode!\nGUEST: Thanks for having me!\nHOST: Let's dive into the topic.\nGUEST: Great! Let's start with the basics...",
+              speaker: "dialogue",
+              voiceId: speakers[0]?.id || "mock-voice-1",
+              keyPoints: ["Introduction", "What to expect"],
+              estimatedDuration: "3 minutes",
+              order: 1
+            },
+            {
+              title: "Main Discussion",
+              content: "This is the main content section where we explore the key concepts in detail. We'll cover various aspects and provide practical examples.",
+              speaker: "host",
+              voiceId: speakers[0]?.id || "mock-voice-1",
+              keyPoints: ["Key concept 1", "Key concept 2"],
+              estimatedDuration: "8 minutes",
+              order: 2
+            },
+            {
+              title: "Conclusion & Takeaways",
+              content: "HOST: Let's wrap up what we've learned today.\nGUEST: Yes, the main takeaway is...\nHOST: Thanks for joining us!\nGUEST: Thank you!",
+              speaker: "dialogue",
+              voiceId: speakers[0]?.id || "mock-voice-1",
+              keyPoints: ["Summary", "Next steps"],
+              estimatedDuration: "4 minutes",
+              order: 3
+            }
+          ]
+        }
+      };
+    }
+
+    const formData = new FormData();
+    formData.append('command', 'generate_podcast_structure');
+    formData.append('user', user);
+    formData.append('session', sessionId);
+    formData.append('title', title);
+    formData.append('description', description);
+    formData.append('prompt', prompt);
+    formData.append('speakers', JSON.stringify(speakers));
+
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`AI service error: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to generate podcast structure: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
+
+  // Generate podcast audio from text
+  async generatePodcastAudioFromText(
+    sessionId: string,
+    user: string,
+    podcastId: string,
+    segmentIndex: number,
+    text: string,
+    speakers: Array<{ id: string; role: string; name?: string }>,
+    voiceId?: string
+  ): Promise<any> {
+    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
+    
+    // Mock mode - return fake audio generation result
+    if (MOCK_MODE) {
+      logger.info(`🎭 MOCK MODE: Generating audio for segment ${segmentIndex} of podcast ${podcastId}`);
+      const isDialogue = text.includes('HOST:') || text.includes('GUEST:');
+      return {
+        success: true,
+        segmentIndex: segmentIndex,
+        objectKey: `${user}/${sessionId}/podcasts/${podcastId}/segment_${segmentIndex}.mp3`,
+        duration: 45 + Math.floor(Math.random() * 30), // Random duration between 45-75 seconds
+        type: isDialogue ? 'dialogue' : 'monologue',
+        ...(isDialogue && { partCount: 4 })
+      };
+    }
+
+    const formData = new FormData();
+    formData.append('command', 'generate_podcast_audio_from_text');
+    formData.append('user', user);
+    formData.append('session', sessionId);
+    formData.append('podcast_id', podcastId);
+    formData.append('segment_index', segmentIndex.toString());
+    formData.append('text', text);
+    formData.append('speakers', JSON.stringify(speakers));
+    
+    if (voiceId) {
+      formData.append('voice_id', voiceId);
+    }
+
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`AI service error: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to generate podcast audio: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
   
 
   // Analyse PDF
@@ -469,6 +611,32 @@ Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
     }
   }
 
+  async generatePodcastImage(sessionId: string, user: string, summary: string): Promise<string> {
+
+    const formData = new FormData();
+    formData.append('command', 'generate_podcast_image');
+    formData.append('session', sessionId);
+    formData.append('user', user);
+    formData.append('summary', summary);
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      return result.image_key;
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to generate podcast image: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
   // Get session by ID
   getSession(sessionId: string): AISession | undefined {
     return this.sessions.get(sessionId);

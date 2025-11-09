@@ -434,8 +434,6 @@ export const workspace = router({
       // }
       // console.log('✅ AI service is healthy');
 
-      await aiSessionService.initSession(input.workspaceId, ctx.session.user.id);
-
       const fileObj = new File([fileBuffer], input.file.filename, { type: input.file.contentType });
 
       await updateAnalysisProgress(ctx.db, input.workspaceId, {

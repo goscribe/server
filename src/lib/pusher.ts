@@ -104,7 +104,7 @@ export class PusherService {
   static async emitChannelEvent(channelId: string, event: string, data: any) {
     try {
       const channel = channelId; // Use channelId directly as channel name
-      const eventName = `${channelId}_${event}`;
+      const eventName = event;
       await pusher.trigger(channel, eventName, data);
       console.log(`📡 Pusher notification sent: ${eventName} to ${channel}`);
     } catch (error) {
