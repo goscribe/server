@@ -444,8 +444,8 @@ export const worksheets = router({
               answer,
               difficulty: (input.difficulty.toUpperCase()) as any,
               order: i,
+              type,
               meta: { 
-                type,
                 options: options.length > 0 ? options : undefined,
                 mark_scheme: problem.mark_scheme || undefined,
               },
