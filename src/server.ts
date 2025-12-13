@@ -25,6 +25,7 @@ async function main() {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Set-Cookie'],
     exposedHeaders: ['Set-Cookie'],
+    preflightContinue: false, // Important: stop further handling of OPTIONS
   }));
 
   // Custom morgan middleware with logger integration
