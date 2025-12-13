@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { serialize } from 'cookie';
 import crypto from 'node:crypto';
 import { TRPCError } from '@trpc/server';
-import { supabaseClient } from 'src/lib/storage.js';
+import { supabaseClient } from '../lib/storage.js';
 
 // Helper to create custom auth token
 function createCustomAuthToken(userId: string): string {
