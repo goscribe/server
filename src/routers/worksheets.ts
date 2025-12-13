@@ -281,6 +281,7 @@ export const worksheets = router({
           userAnswer: input.answer,
           completedAt: input.completed ? new Date() : null,
           attempts: { increment: 1 },
+          correct: input.correct,
         },
       });
 
@@ -447,7 +448,7 @@ export const worksheets = router({
               type,
               meta: { 
                 options: options.length > 0 ? options : undefined,
-                mark_scheme: problem.mark_scheme || undefined,
+                markScheme: problem.mark_scheme || undefined,
               },
             },
           });
@@ -490,7 +491,7 @@ export const worksheets = router({
       
       // Parse question meta to get mark_scheme
       const questionMeta = question.meta ? (typeof question.meta === 'object' ? question.meta : JSON.parse(question.meta as any)) : {} as any;
-      const markScheme = questionMeta.mark_scheme;
+      const markScheme = questionMeta.markScheme;
 
       let isCorrect = false;
       let userMarkScheme = null;
@@ -517,7 +518,7 @@ export const worksheets = router({
         }
       } else {
         // Simple string comparison if no mark scheme
-        isCorrect = question.answer === input.answer;
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'No mark scheme found for question' });
       }
 
 

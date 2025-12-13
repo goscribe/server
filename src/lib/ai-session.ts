@@ -26,6 +26,19 @@ export interface AISession {
 
 const IMITATE_WAIT_TIME_MS = MOCK_MODE ?  1000 * 10 : 0;
 
+export interface ProcessFileResult {
+  status: 'success' | 'error';
+  textContent: string | null;
+  imageDescriptions: Array<{
+    page: number;
+    description: string;
+    hasVisualContent: boolean;
+  }>;
+  comprehensiveDescription: string | null;
+  pageCount: number;
+  error?: string;
+}
+
 export class AISessionService {
   private sessions = new Map<string, AISession>();
 
@@ -115,67 +128,105 @@ export class AISessionService {
     });
   }
 
-  // Upload file to AI session
-  async uploadFile(sessionId: string, user: string, file: File, fileType: 'image' | 'pdf'): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
+  // Process file (PDF/image) and return comprehensive text descriptions
+  async processFile(
+    sessionId: string,
+    user: string,
+    fileUrl: string,
+    fileType: 'image' | 'pdf',
+    maxPages?: number
+  ): Promise<ProcessFileResult> {
     await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
-    // Mock mode - simulate successful file upload
-    if (MOCK_MODE) {
-      console.log(`🎭 MOCK MODE: Uploading ${fileType} file "${file.name}" to session ${sessionId}`);
-      session.files.push(file.name);
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-      return;
-    }
-
-    const command = fileType === 'image' ? 'append_image' : 'append_pdflike';
     
-    const formData = new FormData();
-    formData.append('command', command);
-    formData.append('file', file);
-    formData.append('session', sessionId);
-    formData.append('user', user);
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      console.log(`📋 Upload result:`, result);
-      if (!result.message) {
-        throw new Error(`AI service error: No response message`);
-      }
-
-      // Update session
-      session.files.push(file.name);
-      session.updatedAt = new Date();
-      this.sessions.set(sessionId, session);
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to upload file: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
+    // Mock mode - return fake processing result
+    if (MOCK_MODE) {
+      logger.info(`🎭 MOCK MODE: Processing ${fileType} file from URL for session ${sessionId}`);
+      const mockPageCount = fileType === 'pdf' ? 15 : 1;
+      return {
+        status: 'success',
+        textContent: `Mock extracted text content from ${fileType} file. This would contain the full text extracted from the document.`,
+        imageDescriptions: Array.from({ length: mockPageCount }, (_, i) => ({
+          page: i + 1,
+          description: `Page ${i + 1} contains educational content with diagrams and text.`,
+          hasVisualContent: true,
+        })),
+        comprehensiveDescription: `DOCUMENT SUMMARY (${mockPageCount} ${mockPageCount === 1 ? 'page' : 'pages'})\n\nTEXT CONTENT:\nMock extracted text content...\n\nVISUAL CONTENT DESCRIPTIONS:\nPage-by-page descriptions of visual elements.`,
+        pageCount: mockPageCount,
+      };
     }
+
+    const formData = new FormData();
+    formData.append('command', 'process_file');
+    formData.append('fileUrl', fileUrl);
+    formData.append('fileType', fileType);
+    if (maxPages) {
+      formData.append('maxPages', maxPages.toString());
+    }
+
+    console.log('formData', formData);
+
+    // Retry logic for file processing
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info(`📄 Processing ${fileType} file attempt ${attempt}/${maxRetries} for session ${sessionId}`);
+        
+        // Set timeout for large files (5 minutes)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
+        const response = await fetch(AI_SERVICE_URL, {
+          method: 'POST',
+          body: formData,
+          // signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          logger.error(`❌ File processing error response:`, errorText);
+          throw new Error(`AI service error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        logger.info(`📋 File processing result: status=${result.status}, pageCount=${result.pageCount}`);
+
+        if (result.status === 'error') {
+          throw new Error(result.error || 'File processing failed');
+        }
+
+        return result as ProcessFileResult;
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
+        logger.error(`❌ File processing attempt ${attempt} failed:`, lastError.message);
+        
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+          logger.info(`⏳ Retrying file processing in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    logger.error(`💥 All ${maxRetries} file processing attempts failed. Last error:`, lastError?.message);
+    return {
+      status: 'error',
+      textContent: null,
+      imageDescriptions: [],
+      comprehensiveDescription: null,
+      pageCount: 0,
+      error: `Failed to process file after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`,
+    };
   }
 
 
 
   // Generate study guide
   async generateStudyGuide(sessionId: string, user: string): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
     await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
     // Mock mode - return fake study guide
     if (MOCK_MODE) {
@@ -227,11 +278,6 @@ This mock study guide demonstrates the structure and format that would be genera
 
   // Generate flashcard questions
   async generateFlashcardQuestions(sessionId: string, user: string, numQuestions: number, difficulty: 'easy' | 'medium' | 'hard'): Promise<string> {
-    // const session = this.sessions.get(sessionId);
-    // if (!session) {
-    //   throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    // }
-
     await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
     // Mock mode - return fake flashcard questions
     if (MOCK_MODE) {
@@ -503,113 +549,6 @@ This mock study guide demonstrates the structure and format that would be genera
   }
   
 
-  // Analyse PDF
-  async analysePDF(sessionId: string, user: string): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
-    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
-    // Mock mode - return fake PDF analysis
-    if (MOCK_MODE) {
-      console.log(`🎭 MOCK MODE: Analysing PDF for session ${sessionId}`);
-      return `Mock PDF Analysis Results:
-
-Document Type: Educational Material
-Pages: 15
-Language: English
-Key Topics Identified:
-- Introduction to Machine Learning
-- Data Preprocessing Techniques
-- Model Training and Validation
-- Performance Metrics
-
-Summary: This mock PDF analysis shows the structure and content that would be extracted from an uploaded PDF document. The analysis includes document metadata, key topics, and a summary of the content.
-
-Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
-    }
-
-    const formData = new FormData();
-    formData.append('command', 'analyse_pdf');
-    formData.append('session', sessionId);
-    formData.append('user', user);
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      return result.message || 'PDF analysis completed';
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to analyse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
-  }
-
-  // Analyse Image
-  async analyseImage(sessionId: string, user: string): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'AI session not found' });
-    }
-
-    await new Promise(resolve => setTimeout(resolve, IMITATE_WAIT_TIME_MS));
-    // Mock mode - return fake image analysis
-    if (MOCK_MODE) {
-      console.log(`🎭 MOCK MODE: Analysing image for session ${sessionId}`);
-      return `Mock Image Analysis Results:
-
-Image Type: Educational Diagram
-Format: PNG
-Dimensions: 1920x1080
-Content Description:
-- Contains a flowchart or diagram
-- Shows a process or system architecture
-- Includes text labels and annotations
-- Educational or instructional content
-
-Key Elements Identified:
-- Process flow arrows
-- Decision points
-- Input/output elements
-- Descriptive text
-
-Summary: This mock image analysis demonstrates the type of content extraction that would be performed on uploaded images. The analysis identifies visual elements, text content, and overall structure.
-
-Note: This is a mock response generated when DONT_TEST_INFERENCE=true`;
-    }
-
-    const formData = new FormData();
-    formData.append('command', 'analyse_img');
-    formData.append('session', sessionId);
-    formData.append('user', user);
-    try {
-      const response = await fetch(AI_SERVICE_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      return result.message || 'Image analysis completed';
-    } catch (error) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: `Failed to analyse image: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      });
-    }
-  }
 
   async generatePodcastImage(sessionId: string, user: string, summary: string): Promise<string> {
 

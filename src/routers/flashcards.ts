@@ -177,22 +177,6 @@ export const flashcards = router({
 
       await PusherService.emitTaskComplete(input.workspaceId, 'flash_card_info', { status: 'generating', numCards: input.numCards, difficulty: input.difficulty });
 
-      const formattedPreviousCards = flashcardCurrent?.flashcards.map((card) => ({
-        front: card.front,
-        back: card.back,
-      }));
-
-
-      const partialPrompt = `
-      This is the users previous flashcards, avoid repeating any existing cards.
-      Please generate ${input.numCards} new cards,
-      Of a ${input.difficulty} difficulty,
-      Of a ${input.tags?.join(', ')} tag,
-      Of a ${input.title} title.
-      ${formattedPreviousCards?.map((card) => `Front: ${card.front}\nBack: ${card.back}`).join('\n')}
-
-      The user has also left you this prompt: ${input.prompt}
-      `
       const artifact = await ctx.db.artifact.create({
         data: {
           workspaceId: input.workspaceId,
