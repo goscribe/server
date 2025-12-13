@@ -130,6 +130,8 @@ model Workspace {
 
   analysisProgress Json?
 
+  needsAnalysis Boolean @default(false)
+
   // Raw uploads attached to this workspace
   uploads     FileAsset[]
 
@@ -191,6 +193,7 @@ model FileAsset {
   objectKey String?
   url       String?  // optional if serving via signed GET per-view
   checksum  String?  // optional server-side integrity
+  aiTranscription Json? @default("{}")
 
   meta      Json?    // arbitrary metadata
 

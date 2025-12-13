@@ -877,7 +877,6 @@ export const podcast = router({
         updatedAt: segment.updatedAt,
       };
     }),
-
   // Get available voices for TTS
   getAvailableVoices: authedProcedure
     .query(async () => {
