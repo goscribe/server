@@ -3,6 +3,8 @@ import { router, publicProcedure, authedProcedure } from '../trpc.js';
 import bcrypt from 'bcryptjs';
 import { serialize } from 'cookie';
 import crypto from 'node:crypto';
+import { TRPCError } from '@trpc/server';
+import { supabaseClient } from 'src/lib/storage.js';
 
 // Helper to create custom auth token
 function createCustomAuthToken(userId: string): string {
@@ -19,6 +21,54 @@ function createCustomAuthToken(userId: string): string {
 }
 
 export const auth = router({
+  updateProfile: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+    }))
+    .mutation(async ({ctx, input}) => {
+      const { name } = input;
+
+      await ctx.db.user.update({
+        where: {
+          id: ctx.session.user.id,
+        },
+        data: {
+          name: name,
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Profile updated successfully',
+      };
+    }),
+  uploadProfilePicture: publicProcedure
+    .mutation(async ({ctx, input}) => {
+      const objectKey = `profile_picture_${ctx.session.user.id}`;
+      const { data: signedUrlData, error: signedUrlError } = await supabaseClient.storage
+        .from('media')
+        .createSignedUploadUrl(objectKey, { upsert: true }); // 5 minutes
+      if (signedUrlError) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed to generate upload URL: ${signedUrlError.message}` });
+      }
+
+      await ctx.db.fileAsset.create({
+        data: {
+          userId: ctx.session.user.id,
+          name: 'Profile Picture',
+          mimeType: 'image/jpeg',
+          size: 0,
+          bucket: 'media',
+          objectKey: objectKey,
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Profile picture uploaded successfully',
+        signedUrl: signedUrlData.signedUrl,
+      };
+    }),
   signup: publicProcedure
     .input(z.object({
       name: z.string().min(1),
@@ -85,7 +135,6 @@ export const auth = router({
         id: user.id, 
         email: user.email, 
         name: user.name, 
-        image: user.image,
         token: authToken
       };
     }),
@@ -108,12 +157,20 @@ export const auth = router({
         id: user.id, 
         email: user.email, 
         name: user.name, 
-        image: user.image 
       } 
     };
   }),
   logout: publicProcedure.mutation(async ({ ctx }) => {
-    // Clear the auth cookie
+    const token = ctx.cookies["auth_token"];
+
+    if (!token) {
+      throw new Error("No token found");
+    }
+
+    await ctx.db.session.delete({
+      where: { id: token },
+    });
+
     ctx.res.setHeader("Set-Cookie", serialize("auth_token", "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

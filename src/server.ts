@@ -10,6 +10,7 @@ import { appRouter } from './routers/_app.js';
 import { createContext } from './context.js';
 import { prisma } from './lib/prisma.js';
 import { logger } from './lib/logger.js';
+import { supabaseClient } from './lib/storage.js';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
@@ -43,6 +44,18 @@ async function main() {
   // Health (plain Express)
   app.get('/', (_req, res) => {
     res.json({ ok: true, service: 'trpc-express', ts: Date.now() });
+  });
+
+  app.get('/profile-picture/:objectKey', async (req, res) => {
+    const { objectKey } = req.params;
+    const signedUrl = await supabaseClient.storage
+      .from('media')
+      .createSignedUrl(objectKey, 60 * 60 * 24 * 30);
+    if (signedUrl.error) {
+      return res.status(500).json({ error: 'Failed to generate signed URL' });
+    }
+    // res.json({ url: signedUrl.data.signedUrl });
+    res.redirect(signedUrl.data.signedUrl);
   });
 
   // tRPC mounted under /trpc

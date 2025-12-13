@@ -38,7 +38,13 @@ export const members = router({
               id: true,
               name: true,
               email: true,
-              image: true,
+              profilePicture: {
+                select: {
+                  id: true,
+                  name: true,
+                  url: true,
+                }
+              }
             }
           },
           members: {
@@ -48,7 +54,13 @@ export const members = router({
                   id: true,
                   name: true,
                   email: true,
-                  image: true,
+                  profilePicture: {
+                    select: {
+                      id: true,
+                      name: true,
+                      url: true,
+                    }
+                  }
                 }
               }
             }
@@ -69,7 +81,6 @@ export const members = router({
           id: workspace.owner.id,
           name: workspace.owner.name || 'Unknown',
           email: workspace.owner.email || '',
-          image: workspace.owner.image,
           role: 'owner' as const,
           joinedAt: workspace.createdAt,
         },
@@ -77,7 +88,6 @@ export const members = router({
           id: membership.user.id,
           name: membership.user.name || 'Unknown',
           email: membership.user.email || '',
-          image: membership.user.image,
           role: membership.role as 'admin' | 'member',
           joinedAt: membership.joinedAt,
         }))
@@ -230,7 +240,16 @@ export const members = router({
         invitedByName: invitation.workspace.owner.name || invitation.workspace.owner.email,
       };
     }),
-
+  getInvitations: authedProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const invitations = await ctx.db.workspaceInvitation.findMany({
+        where: { workspaceId: input.workspaceId },
+      });
+      return invitations;
+    }),
   /**
    * Accept an invitation (public endpoint)
    */
@@ -277,8 +296,10 @@ export const members = router({
         });
       }
 
+      const user = await ctx.db.user.findFirst({ where: { id: ctx.session.user.id } });
+      if (!user || !user.email) throw new TRPCError({ code: 'NOT_FOUND' });
       // Check if the email matches the user's email
-      if (ctx.session.user.email !== invitation.email) {
+      if (user.email !== invitation.email) {
         throw new TRPCError({ 
           code: 'BAD_REQUEST', 
           message: 'This invitation was sent to a different email address' 

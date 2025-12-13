@@ -191,7 +191,7 @@ export const workspace = router({
         folders: folders.length,
         lastUpdated: lastUpdated?.updatedAt,
         spaceUsed: spaceLeft._sum?.size ?? 0,
-        spaceLeft: 1000000000 - (spaceLeft._sum?.size ?? 0) || 0,
+        spaceTotal: 1000000000,
       };
     }),
   update: authedProcedure
@@ -249,6 +249,22 @@ export const workspace = router({
       }
 
       return { folder, parents };
+    }),
+
+  getSharedWith: authedProcedure
+    .input(z.object({
+      id: z.string(),
+    }))
+    .query(async ({ ctx, input }) => {
+
+      const user = await ctx.db.user.findFirst({ where: { id: ctx.session.user.id } });
+      if (!user || !user.email) throw new TRPCError({ code: 'NOT_FOUND' });
+      const sharedWith = await ctx.db.workspace.findMany({ where: { members: { some: { userId: ctx.session.user.id } } } });
+      const invitations = await ctx.db.workspaceInvitation.findMany({ where: { email: user.email, acceptedAt: null }, include: {
+        workspace: true,
+      } });
+
+      return { shared: sharedWith, invitations };
     }),
   uploadFiles: authedProcedure
     .input(z.object({

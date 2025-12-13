@@ -15,7 +15,13 @@ export const chat = router({
                             select: {
                                 id: true,
                                 name: true,
-                                image: true,
+                                profilePicture: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        url: true,
+                                    }
+                                }
                             }
                         }
                     }
@@ -41,7 +47,6 @@ export const chat = router({
                                 select: {
                                     id: true,
                                     name: true,
-                                    image: true,
                                 }
                             }
                         }
@@ -65,7 +70,6 @@ export const chat = router({
                             select: {
                                 id: true,
                                 name: true,
-                                image: true,
                             }
                         }
                     }
@@ -101,7 +105,6 @@ export const chat = router({
                                 select: {
                                     id: true,
                                     name: true,
-                                    image: true,
                                 }
                             },
                         }
@@ -127,7 +130,6 @@ export const chat = router({
                                 select: {
                                     id: true,
                                     name: true,
-                                    image: true,
                                 }
                             }
                         }
@@ -155,7 +157,6 @@ export const chat = router({
                                 select: {
                                     id: true,
                                     name: true,
-                                    image: true,
                                 }
                             }
                         }
@@ -176,7 +177,6 @@ export const chat = router({
                         select: {
                             id: true,
                             name: true,
-                            image: true,
                         }
                     }
                 }
@@ -195,7 +195,6 @@ export const chat = router({
                         select: {
                             id: true,
                             name: true,
-                            image: true,
                         }
                     }
                 }
@@ -214,7 +213,6 @@ export const chat = router({
                         select: {
                             id: true,
                             name: true,
-                            image: true,
                         }
                     }
                 }
@@ -233,7 +231,6 @@ export const chat = router({
                         select: {
                             id: true,
                             name: true,
-                            image: true,
                         }
                     },
                 }

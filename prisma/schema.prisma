@@ -1,11 +1,10 @@
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL") // for shadow db in migrations
 }
 
@@ -39,49 +38,51 @@ enum QuestionType {
 // NextAuth-compatible auth models (minimal)
 //
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  passwordHash  String?   // for credentials login
-  image         String?
-  session       Session[]
+  id             String     @id @default(cuid())
+  name           String?
+  email          String?    @unique
+  emailVerified  DateTime?
+  passwordHash   String? // for credentials login
+  profilePicture FileAsset? @relation(fields: [fileAssetId], references: [id])
+  session        Session[]
 
   // Ownership
-  folders       Folder[]          @relation("UserFolders")
-  workspaces    Workspace[]       @relation("UserWorkspaces")
-  invitedInWorkspaces Workspace[]       @relation("WorkspaceSharedWith") // many-to-many (deprecated)
+  folders              Folder[]          @relation("UserFolders")
+  workspaces           Workspace[]       @relation("UserWorkspaces")
+  invitedInWorkspaces  Workspace[]       @relation("WorkspaceSharedWith") // many-to-many (deprecated)
   workspaceMemberships WorkspaceMember[] // proper member management
-  uploads       FileAsset[]       @relation("UserUploads")
-  artifacts     Artifact[]        @relation("UserArtifacts")
-  versions      ArtifactVersion[] @relation("UserArtifactVersions")
-  
+  uploads              FileAsset[]       @relation("UserUploads")
+  artifacts            Artifact[]        @relation("UserArtifacts")
+  versions             ArtifactVersion[] @relation("UserArtifactVersions")
+
   // Progress tracking
-  flashcardProgress         FlashcardProgress[]       @relation("UserFlashcardProgress")
+  flashcardProgress         FlashcardProgress[]         @relation("UserFlashcardProgress")
   worksheetQuestionProgress WorksheetQuestionProgress[]
-  
+
   // Invitations
   sentInvitations WorkspaceInvitation[] @relation("UserInvitations")
 
   notifications Notification[]
   chats         Chat[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt  
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  fileAssetId   String?
 }
 
 model Notification {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content String
-  read Boolean @default(false)
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  read      Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
 model Session {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id      String   @id @default(cuid())
+  userId  String
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expires DateTime
 }
 
@@ -97,62 +98,62 @@ model VerificationToken {
 // Filesystem-like structure
 //
 model Folder {
-  id        String    @id @default(cuid())
-  name      String
-  ownerId   String
-  owner     User      @relation("UserFolders", fields: [ownerId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  name    String
+  ownerId String
+  owner   User   @relation("UserFolders", fields: [ownerId], references: [id], onDelete: Cascade)
 
   // Nested folders
-  parentId  String?
-  parent    Folder?   @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
-  children  Folder[]  @relation("FolderChildren")
-  color     String   @default("#9D00FF")
+  parentId String?
+  parent   Folder?  @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children Folder[] @relation("FolderChildren")
+  color    String   @default("#9D00FF")
 
   // Files (workspaces) inside folders
   workspaces Workspace[]
 
   // Metadata
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Helpful composite index: folders per owner + parent
   @@index([ownerId, parentId])
 }
 
 model Workspace {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   title       String
-  description String?  // optional notes/description for the "file"
+  description String? // optional notes/description for the "file"
   ownerId     String
-  owner       User     @relation("UserWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
-  icon        String   @default("📄")
-  color       String   @default("#9D00FF")
+  owner       User    @relation("UserWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
+  icon        String  @default("📄")
+  color       String  @default("#9D00FF")
 
   // A workspace (file) lives in a folder (nullable = root)
-  folderId    String?
-  folder      Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  
-  channels  Channel[]
+  folderId String?
+  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
 
-  sharedWith  User[]   @relation("WorkspaceSharedWith") // many-to-many for sharing (deprecated)
-  members     WorkspaceMember[] // proper member management with roles
-  fileBeingAnalyzed Boolean @default(false)
+  channels Channel[]
+
+  sharedWith        User[]            @relation("WorkspaceSharedWith") // many-to-many for sharing (deprecated)
+  members           WorkspaceMember[] // proper member management with roles
+  fileBeingAnalyzed Boolean           @default(false)
 
   analysisProgress Json?
 
   needsAnalysis Boolean @default(false)
 
   // Raw uploads attached to this workspace
-  uploads     FileAsset[]
+  uploads FileAsset[]
 
   // AI outputs for this workspace (study guides, flashcards, etc.)
-  artifacts   Artifact[]
-  
+  artifacts Artifact[]
+
   // Invitations
   invitations WorkspaceInvitation[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([ownerId, folderId])
 }
@@ -162,25 +163,25 @@ model Channel {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  name        String
+  name String
 
-  createdAt   DateTime  @default(now())
-  chats      Chat[]
+  createdAt DateTime @default(now())
+  chats     Chat[]
 
   @@index([workspaceId])
 }
 
 model Chat {
-  id          String    @id @default(cuid())
-  channelId   String
-  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId      String?
-  message     String    // chat message content
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId  String?
+  message String // chat message content
 
-  updatedAt   DateTime  @updatedAt
-  createdAt   DateTime  @default(now())
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 
   @@index([channelId, createdAt])
 }
@@ -189,25 +190,26 @@ model Chat {
 // User uploads (source materials for AI)
 //
 model FileAsset {
-  id        String   @id @default(cuid())
-  workspaceId String
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  userId    String
-  user      User     @relation("UserUploads", fields: [userId], references: [id], onDelete: Cascade)
+  userId String?
+  user   User?   @relation("UserUploads", fields: [userId], references: [id], onDelete: Cascade)
 
-  name      String
-  mimeType  String
-  size      Int
-  bucket    String?
-  objectKey String?
-  url       String?  // optional if serving via signed GET per-view
-  checksum  String?  // optional server-side integrity
-  aiTranscription Json? @default("{}")
+  name            String
+  mimeType        String
+  size            Int
+  bucket          String?
+  objectKey       String?
+  url             String? // optional if serving via signed GET per-view
+  checksum        String? // optional server-side integrity
+  aiTranscription Json?   @default("{}")
 
-  meta      Json?    // arbitrary metadata
+  meta Json? // arbitrary metadata
 
   createdAt DateTime @default(now())
+  User      User[]
 
   @@index([workspaceId])
   @@index([userId, createdAt])
@@ -219,56 +221,56 @@ model FileAsset {
 // - Some artifact types (flashcards, worksheet) have child rows
 //
 model Artifact {
-  id          String       @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  type        ArtifactType
-  title       String
-  isArchived  Boolean      @default(false)
+  type       ArtifactType
+  title      String
+  isArchived Boolean      @default(false)
 
-  generating Boolean      @default(false)
-  generatingMetadata Json?    
+  generating         Boolean @default(false)
+  generatingMetadata Json?
 
   // Worksheet-specific fields
-  difficulty  Difficulty?  // only meaningful for WORKSHEET
-  estimatedTime String?    // only meaningful for WORKSHEET
+  difficulty    Difficulty? // only meaningful for WORKSHEET
+  estimatedTime String? // only meaningful for WORKSHEET
 
   imageObjectKey String?
-  description     String?
+  description    String?
 
   createdById String?
-  createdBy   User?        @relation("UserArtifacts", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   User?   @relation("UserArtifacts", fields: [createdById], references: [id], onDelete: SetNull)
 
-  versions    ArtifactVersion[] // text/transcript versions etc.
-  flashcards  Flashcard[]       // only meaningful for FLASHCARD_SET
-  questions   WorksheetQuestion[] // only meaningful for WORKSHEET
+  versions        ArtifactVersion[] // text/transcript versions etc.
+  flashcards      Flashcard[] // only meaningful for FLASHCARD_SET
+  questions       WorksheetQuestion[] // only meaningful for WORKSHEET
   podcastSegments PodcastSegment[] // only meaningful for PODCAST_EPISODE
 
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([workspaceId, type])
 }
 
 model ArtifactVersion {
-  id          String   @id @default(cuid())
-  artifactId  String
-  artifact    Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  artifactId String
+  artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   // Plain text content (e.g., Study Guide body, Meeting Summary text, Podcast transcript)
-  content     String    // rich text serialized as markdown/HTML stored as TEXT
+  content String // rich text serialized as markdown/HTML stored as TEXT
 
   // For Podcast episodes or other media, store URLs / durations / etc. in data
-  data        Json?     // e.g., { "audioUrl": "...", "durationSec": 312, "voice": "..." }
+  data Json? // e.g., { "audioUrl": "...", "durationSec": 312, "voice": "..." }
 
   // Version sequencing (auto-increment per artifact)
-  version     Int
+  version Int
 
   createdById String?
-  createdBy   User?    @relation("UserArtifactVersions", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   User?   @relation("UserArtifactVersions", fields: [createdById], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([artifactId, version]) // each artifact has 1,2,3...
   @@index([artifactId])
@@ -282,15 +284,15 @@ model Flashcard {
   artifactId String
   artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
-  front      String   // question/term
-  back       String   // answer/definition
-  tags       String[] // optional keywords
-  order      Int      @default(0)
+  front String // question/term
+  back  String // answer/definition
+  tags  String[] // optional keywords
+  order Int      @default(0)
 
   // User progress tracking
-  progress   FlashcardProgress[]
+  progress FlashcardProgress[]
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([artifactId])
 }
@@ -299,33 +301,33 @@ model Flashcard {
 // User Progress on Flashcards (spaced repetition, mastery tracking)
 //
 model FlashcardProgress {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation("UserFlashcardProgress", fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation("UserFlashcardProgress", fields: [userId], references: [id], onDelete: Cascade)
+
   flashcardId String
   flashcard   Flashcard @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
 
   // Study statistics
-  timesStudied              Int      @default(0)
-  timesCorrect              Int      @default(0)
-  timesIncorrect            Int      @default(0)
-  timesIncorrectConsecutive Int      @default(0)  // Track consecutive failures
-  
+  timesStudied              Int @default(0)
+  timesCorrect              Int @default(0)
+  timesIncorrect            Int @default(0)
+  timesIncorrectConsecutive Int @default(0) // Track consecutive failures
+
   // Spaced repetition data
-  easeFactor      Float    @default(2.5)  // SM-2 algorithm ease factor
-  interval        Int      @default(0)     // Days until next review
-  repetitions     Int      @default(0)     // Consecutive correct answers
-  
+  easeFactor  Float @default(2.5) // SM-2 algorithm ease factor
+  interval    Int   @default(0) // Days until next review
+  repetitions Int   @default(0) // Consecutive correct answers
+
   // Mastery level (0-100)
-  masteryLevel    Int      @default(0)
-  
+  masteryLevel Int @default(0)
+
   // Timestamps
-  lastStudiedAt   DateTime?
-  nextReviewAt    DateTime?
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  lastStudiedAt DateTime?
+  nextReviewAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, flashcardId])
   @@index([userId, nextReviewAt])
@@ -336,9 +338,9 @@ model FlashcardProgress {
 // Worksheet Questions (child items of a WORKSHEET Artifact)
 //
 model WorksheetQuestion {
-  id         String       @id @default(cuid())
+  id         String   @id @default(cuid())
   artifactId String
-  artifact   Artifact     @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   prompt     String
   answer     String?
@@ -346,35 +348,35 @@ model WorksheetQuestion {
   difficulty Difficulty   @default(MEDIUM)
   order      Int          @default(0)
 
-  meta       Json?        // e.g., { "choices": ["A","B","C","D"], "correct": 1, "options": [...] }
+  meta Json? // e.g., { "choices": ["A","B","C","D"], "correct": 1, "options": [...] }
 
-  createdAt  DateTime     @default(now())
+  createdAt DateTime                    @default(now())
+  progress  WorksheetQuestionProgress[]
 
   @@index([artifactId])
-  progress   WorksheetQuestionProgress[]
 }
 
 //
 // Per-user progress for Worksheet Questions
 //
 model WorksheetQuestionProgress {
-  id                   String            @id @default(cuid())
-  worksheetQuestionId  String
-  worksheetQuestion    WorksheetQuestion @relation(fields: [worksheetQuestionId], references: [id], onDelete: Cascade)
+  id                  String            @id @default(cuid())
+  worksheetQuestionId String
+  worksheetQuestion   WorksheetQuestion @relation(fields: [worksheetQuestionId], references: [id], onDelete: Cascade)
 
-  userId               String
-  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  modified            Boolean           @default(false)
-  userAnswer           String?
-  correct              Boolean?           @default(false)
-  completedAt          DateTime?
-  attempts             Int               @default(0)
-  timeSpentSec         Int?
-  meta                 Json?
+  modified     Boolean   @default(false)
+  userAnswer   String?
+  correct      Boolean?  @default(false)
+  completedAt  DateTime?
+  attempts     Int       @default(0)
+  timeSpentSec Int?
+  meta         Json?
 
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([worksheetQuestionId, userId])
   @@index([userId])
@@ -387,15 +389,15 @@ model WorkspaceMember {
   id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  role        String    @default("member") // "owner", "admin", "member"
-  
-  joinedAt    DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role String @default("member") // "owner", "admin", "member"
+
+  joinedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([workspaceId, userId]) // One membership per user per workspace
   @@index([workspaceId])
   @@index([userId])
@@ -408,20 +410,20 @@ model WorkspaceInvitation {
   id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  
-  email       String
-  role        String    @default("member") // "owner", "admin", "member"
-  token       String    @unique @default(cuid()) // UUID for invitation link
-  
+
+  email String
+  role  String @default("member") // "owner", "admin", "member"
+  token String @unique @default(cuid()) // UUID for invitation link
+
   invitedById String
-  invitedBy   User      @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
-  
-  acceptedAt  DateTime?
-  expiresAt   DateTime  @default(dbgenerated("NOW() + INTERVAL '7 days'"))
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  
+  invitedBy   User   @relation("UserInvitations", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  acceptedAt DateTime?
+  expiresAt  DateTime  @default(dbgenerated("NOW() + INTERVAL '7 days'"))
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([workspaceId, email]) // One invitation per email per workspace
   @@index([token])
   @@index([workspaceId])
@@ -435,25 +437,25 @@ model PodcastSegment {
   artifactId String
   artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
-  title      String
-  content    String   // Full text content of the segment
-  startTime  Int      // Start time in seconds
-  duration   Int      // Duration in seconds
-  order      Int      // Display order within the episode
-  
+  title     String
+  content   String // Full text content of the segment
+  startTime Int // Start time in seconds
+  duration  Int // Duration in seconds
+  order     Int // Display order within the episode
+
   // Audio file reference
-  objectKey  String?  // Google Cloud Storage object key
-  audioUrl   String?  // Cached signed URL (temporary)
-  
+  objectKey String? // Google Cloud Storage object key
+  audioUrl  String? // Cached signed URL (temporary)
+
   // Metadata
-  keyPoints  String[] // Array of key points
-  meta       Json?    // Additional metadata (voice settings, etc.)
-  
-  generating Boolean @default(false)
+  keyPoints String[] // Array of key points
+  meta      Json? // Additional metadata (voice settings, etc.)
+
+  generating         Boolean @default(false)
   generatingMetadata Json? // Additional metadata (voice settings, etc.)
-  
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([artifactId, order]) // For efficient ordering
   @@index([artifactId, startTime]) // For time-based queries
