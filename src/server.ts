@@ -19,7 +19,7 @@ async function main() {
 
   // Middlewares
   app.use(cors({
-    origin: ['https://www.scribe.study', 'https://scribe.study', /* for local development 'http://localhost:3000'*/],
+    origin: ['https://www.scribe.study', 'https://scribe.study', 'http://localhost:3000'],
     credentials: true, // allow cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Set-Cookie'],
