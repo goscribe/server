@@ -14,7 +14,7 @@ const initializeEditorJsEmptyBlock = () => ({
     {
       id: 'initial',
       type: 'paragraph',
-      data: { text: 'Start writing your study guide...' },
+      data: { text: 'Upload some files to begin creating your revision workspace...' },
     },
   ],
   version: '2.27.0',

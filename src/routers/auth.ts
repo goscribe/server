@@ -10,7 +10,7 @@ import { supabaseClient } from '../lib/storage.js';
 function createCustomAuthToken(userId: string): string {
   const secret = process.env.AUTH_SECRET;
   if (!secret) {
-    throw new Error("AUTH_SECRET is not set");
+    throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: "AUTH_SECRET is not set" });
   }
   
   const base64UserId = Buffer.from(userId, 'utf8').toString('base64url');
@@ -80,7 +80,7 @@ export const auth = router({
         where: { email: input.email },
       });
       if (existing) {
-        throw new Error("Email already registered");
+        throw new TRPCError({ code: 'CONFLICT', message: "Email already registered" });
       }
 
       const hash = await bcrypt.hash(input.password, 10);
@@ -106,12 +106,12 @@ export const auth = router({
         where: { email: input.email },
       });
       if (!user) {
-        throw new Error("Invalid credentials");
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: "Invalid credentials" });
       }
 
       const valid = await bcrypt.compare(input.password, user.passwordHash!);
       if (!valid) {
-        throw new Error("Invalid credentials");
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: "Invalid credentials" });
       }
 
       // Create custom auth token
@@ -141,7 +141,7 @@ export const auth = router({
   getSession: publicProcedure.query(async ({ ctx }) => {
     // Just return the current session from context
     if (!ctx.session) {
-      throw new Error("No session found");
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: "No session found" });
     }
 
     const user = await ctx.db.user.findUnique({
@@ -149,7 +149,7 @@ export const auth = router({
     });
 
     if (!user) {
-      throw new Error("User not found");
+      throw new TRPCError({ code: 'NOT_FOUND', message: "User not found" });
     }
 
     return { 
@@ -164,7 +164,7 @@ export const auth = router({
     const token = ctx.cookies["auth_token"];
 
     if (!token) {
-      throw new Error("No token found");
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: "No token found" });
     }
 
     await ctx.db.session.delete({

@@ -576,6 +576,77 @@ This mock study guide demonstrates the structure and format that would be genera
       });
     }
   }
+
+  async segmentStudyGuide (sessionId: string, user: string, studyGuide: string): Promise<{
+    hint: string;
+    content: string
+  }[]> {
+    // def generate_study_guide_segmentation(request):
+    // user = request.form.get("user")
+    // session = request.form.get("session")
+    // study_guide = request.form.get("study_guide")
+
+    // if not user or not session:
+    //     return {"error": "Session not initialized."}, 400
+    // if not study_guide:
+    //     print("Study guide not provided.")
+    //     return {"error": "Study guide not provided."}, 400
+    
+    // messages = generate_segmentation(study_guide)
+    // return {"segmentation": messages}, 200  
+
+    const formData = new FormData();
+    formData.append('command', 'generate_study_guide_segmentation');
+    formData.append('session', sessionId);
+    formData.append('user', user);
+    formData.append('study_guide', studyGuide);
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+      }
+      const result = await response.json();
+      return result.segmentation;
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to segment study guide: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
+  async validateSegmentSummary(sessionId: string, user: string, segmentContent: string, studentResponse: string, studyGuide: string): Promise<{
+    valid: boolean;
+    feedback: string;
+  }> {
+    const formData = new FormData();
+    formData.append('command', 'validate_segment_summary');
+    formData.append('session', sessionId);
+    formData.append('user', user);
+
+    formData.append('segment_content', segmentContent);
+    formData.append('student_response', studentResponse);
+    formData.append('study_guide', studyGuide);
+    try {
+      const response = await fetch(AI_SERVICE_URL, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        throw new Error(`AI service error: ${response.status} ${response.statusText}`);
+      }
+      const result = await response.json();
+      return result.feedback;
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: `Failed to validate segment summary: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
+    }
+  }
+
   // Get session by ID
   getSession(sessionId: string): AISession | undefined {
     return this.sessions.get(sessionId);
